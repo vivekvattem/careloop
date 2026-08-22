@@ -17,6 +17,11 @@ import type {
   HoldResponse,
   LeaveConflictPreview,
   SymptomInput,
+  PreVisitSummary,
+  PostVisitSummary,
+  PatientPostVisitSummary,
+  CompleteVisitInput,
+  ClinicalRecord,
 } from "../types/appointment";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000/api/v1";
@@ -175,6 +180,55 @@ export const api = {
     request<LeaveConflictPreview>(
       `/admin/doctors/${doctorId}/leave-conflicts?date=${encodeURIComponent(date)}`,
       {},
+      token,
+    ),
+  patientPreVisitSummary: (token: string, appointmentId: string) =>
+    request<PreVisitSummary>(`/appointments/${appointmentId}/pre-visit-summary`, {}, token),
+  patientPostVisitSummary: (token: string, appointmentId: string) =>
+    request<PatientPostVisitSummary>(`/appointments/${appointmentId}/post-visit-summary`, {}, token),
+  doctorPreVisitSummary: (token: string, appointmentId: string) =>
+    request<PreVisitSummary>(`/doctor/me/appointments/${appointmentId}/pre-visit-summary`, {}, token),
+  regeneratePreVisitSummary: (token: string, appointmentId: string) =>
+    request<{ appointment_id: string; status: "retry_pending" }>(
+      `/doctor/me/appointments/${appointmentId}/pre-visit-summary/regenerate`,
+      { method: "POST" },
+      token,
+    ),
+  completeVisit: (token: string, appointmentId: string, input: CompleteVisitInput) =>
+    request<ClinicalRecord>(
+      `/doctor/me/appointments/${appointmentId}/complete`,
+      { method: "POST", body: JSON.stringify(input) },
+      token,
+    ),
+  clinicalRecord: (token: string, appointmentId: string) =>
+    request<ClinicalRecord>(`/doctor/me/appointments/${appointmentId}/clinical-record`, {}, token),
+  updateClinicalRecord: (token: string, appointmentId: string, input: CompleteVisitInput) =>
+    request<ClinicalRecord>(
+      `/doctor/me/appointments/${appointmentId}/clinical-record`,
+      { method: "PUT", body: JSON.stringify(input) },
+      token,
+    ),
+  doctorPostVisitSummary: (token: string, appointmentId: string) =>
+    request<PostVisitSummary>(`/doctor/me/appointments/${appointmentId}/post-visit-summary`, {}, token),
+  regeneratePostVisitSummary: (token: string, appointmentId: string) =>
+    request<{ appointment_id: string; status: "retry_pending" }>(
+      `/doctor/me/appointments/${appointmentId}/post-visit-summary/regenerate`,
+      { method: "POST" },
+      token,
+    ),
+  approvePostVisitSummary: (
+    token: string,
+    appointmentId: string,
+    patientFriendlySummary?: string,
+  ) => request<PostVisitSummary>(
+    `/doctor/me/appointments/${appointmentId}/post-visit-summary/approve`,
+    { method: "POST", body: JSON.stringify({ patient_friendly_summary: patientFriendlySummary || null }) },
+    token,
+  ),
+  rejectPostVisitSummary: (token: string, appointmentId: string) =>
+    request<PostVisitSummary>(
+      `/doctor/me/appointments/${appointmentId}/post-visit-summary/reject`,
+      { method: "POST" },
       token,
     ),
 };

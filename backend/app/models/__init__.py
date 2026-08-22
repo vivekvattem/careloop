@@ -1,5 +1,19 @@
 from app.models.doctor import DoctorLeave, DoctorProfile, DoctorWorkingHour
 from app.models.user import User, UserRole
+from app.models.visit import (
+    CareDocument,
+    CareDocumentType,
+    ClinicalNote,
+    GenerationSource,
+    GenerationStatus,
+    PostVisitSummary,
+    Prescription,
+    PrescriptionItem,
+    PreVisitSummary,
+    PreVisitSummarySource,
+    ReviewStatus,
+    Urgency,
+)
 
 __all__ = [
     "Appointment",
@@ -13,6 +27,18 @@ __all__ = [
     "SymptomSubmission",
     "User",
     "UserRole",
+    "CareDocument",
+    "CareDocumentType",
+    "ClinicalNote",
+    "GenerationSource",
+    "GenerationStatus",
+    "PostVisitSummary",
+    "Prescription",
+    "PrescriptionItem",
+    "PreVisitSummary",
+    "PreVisitSummarySource",
+    "ReviewStatus",
+    "Urgency",
 ]
 from app.models.appointment import (
     Appointment,

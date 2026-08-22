@@ -190,7 +190,12 @@ class AppointmentService:
                 slot_end=utc(hold.slot_end),
                 status=AppointmentStatus.CONFIRMED,
             )
-            self.appointments.create_symptoms(appointment, **symptoms.model_dump())
+            symptom_record = self.appointments.create_symptoms(
+                appointment, **symptoms.model_dump()
+            )
+            from app.services.visit import create_pending_pre_visit
+
+            create_pending_pre_visit(self.db, appointment, symptom_record)
             self.appointments.create_history(
                 appointment,
                 previous_status=None,
@@ -290,7 +295,7 @@ class AppointmentService:
             )
             if original.symptom_submission:
                 source = original.symptom_submission
-                self.appointments.create_symptoms(
+                replacement_symptoms = self.appointments.create_symptoms(
                     replacement,
                     chief_complaint=source.chief_complaint,
                     symptom_description=source.symptom_description,
@@ -299,6 +304,9 @@ class AppointmentService:
                     existing_conditions=source.existing_conditions,
                     current_medications=source.current_medications,
                 )
+                from app.services.visit import create_pending_pre_visit
+
+                create_pending_pre_visit(self.db, replacement, replacement_symptoms)
             self.appointments.create_history(
                 original,
                 previous_status=previous,

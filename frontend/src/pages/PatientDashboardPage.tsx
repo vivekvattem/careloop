@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 
 import { ApiError, api } from "../api/client";
 import { useAuth } from "../contexts/AuthContext";
-import type { AppointmentListItem, HoldResponse, SymptomInput } from "../types/appointment";
+import type { AppointmentListItem, HoldResponse, PatientPostVisitSummary, PreVisitSummary, SymptomInput } from "../types/appointment";
 import type { DoctorPublic, SlotPreview } from "../types/doctor";
 
 const inputClass = "rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm";
@@ -30,6 +30,8 @@ export function PatientDashboardPage() {
   const [remaining, setRemaining] = useState(0);
   const [symptoms, setSymptoms] = useState(emptySymptoms);
   const [reschedulingId, setReschedulingId] = useState<string | null>(null);
+  const [preVisit, setPreVisit] = useState<PreVisitSummary | null>(null);
+  const [postVisit, setPostVisit] = useState<PatientPostVisitSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -130,6 +132,23 @@ export function PatientDashboardPage() {
     }
   };
 
+  const loadVisitIntelligence = async (appointmentId: string) => {
+    if (!accessToken) return;
+    setError("");
+    setPreVisit(null);
+    setPostVisit(null);
+    try {
+      setPreVisit(await api.patientPreVisitSummary(accessToken, appointmentId));
+      try {
+        setPostVisit(await api.patientPostVisitSummary(accessToken, appointmentId));
+      } catch (caught) {
+        if (!(caught instanceof ApiError) || caught.status !== 404) throw caught;
+      }
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught.message : "Could not load visit summaries.");
+    }
+  };
+
   return (
     <section className="space-y-10">
       <div><p className="text-sm font-semibold uppercase tracking-wider text-care-600">Patient workspace</p><h1 className="mt-1 text-3xl font-bold">Hello, {user?.full_name}</h1><p className="mt-2 text-slate-600">Preview, briefly hold, and confirm an appointment.</p></div>
@@ -137,7 +156,10 @@ export function PatientDashboardPage() {
       {error && <p className="rounded-xl bg-red-50 p-3 text-sm text-red-700" role="alert">{error}</p>}
       {notice && <p className="rounded-xl bg-care-50 p-3 text-sm text-care-800">{notice}</p>}
 
-      <section><h2 className="text-2xl font-semibold">My appointments</h2><div className="mt-4 grid gap-4 lg:grid-cols-2"><AppointmentGroup title="Upcoming" items={upcoming} onCancel={cancel} onReschedule={(id) => { setReschedulingId(id); setNotice("Choose and hold a replacement slot below."); window.scrollTo({ top: 500, behavior: "smooth" }); }} /><AppointmentGroup title="Past and cancelled" items={past} /></div></section>
+      <section><h2 className="text-2xl font-semibold">My appointments</h2><div className="mt-4 grid gap-4 lg:grid-cols-2"><AppointmentGroup title="Upcoming" items={upcoming} onCancel={cancel} onSummary={loadVisitIntelligence} onReschedule={(id) => { setReschedulingId(id); setNotice("Choose and hold a replacement slot below."); window.scrollTo({ top: 500, behavior: "smooth" }); }} /><AppointmentGroup title="Past and cancelled" items={past} onSummary={loadVisitIntelligence} /></div></section>
+
+      {preVisit && <section className="rounded-2xl border border-care-200 bg-white p-6"><div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-xl font-semibold">Pre-visit Care Packet</h2><div className="flex gap-2"><StatusBadge status={preVisit.status} />{preVisit.urgency && <span className="rounded-full bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-900">{preVisit.urgency} urgency</span>}</div></div>{preVisit.generation_source === "deterministic_fallback" && <p className="mt-3 rounded-lg bg-slate-50 p-3 text-sm text-slate-600">A reliable standard summary is shown because AI generation was unavailable.</p>}<h3 className="mt-4 font-medium">{preVisit.chief_complaint}</h3><ol className="mt-3 list-decimal space-y-2 pl-5 text-sm">{preVisit.suggested_questions?.map((question) => <li key={question}>{question}</li>)}</ol>{preVisit.safety_disclaimer && <p className="mt-4 text-xs text-slate-500">{preVisit.safety_disclaimer}</p>}
+      {postVisit ? postVisit.availability === "approved" && postVisit.approved_content ? <div className="mt-6 border-t pt-5"><h2 className="text-xl font-semibold">Post-visit summary</h2><p className="mt-3">{postVisit.approved_content.patient_friendly_summary}</p><h3 className="mt-4 font-medium">Medication schedule</h3><div className="mt-2 space-y-2 text-sm">{postVisit.approved_content.medication_schedule.map((item, index) => <pre className="overflow-auto rounded-lg bg-slate-50 p-3 font-sans" key={index}>{JSON.stringify(item, null, 2)}</pre>)}</div><h3 className="mt-4 font-medium">Follow-up steps</h3><ul className="list-disc pl-5 text-sm">{postVisit.approved_content.follow_up_steps.map((step) => <li key={step}>{step}</li>)}</ul></div> : <p className="mt-6 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">Post-visit summary awaiting doctor review.</p> : null}</section>}
 
       <section><h2 className="text-2xl font-semibold">Find a doctor</h2><form className="mt-4 flex max-w-xl gap-2" onSubmit={(event) => { event.preventDefault(); loadDoctors(1, search); }}><input className={`${inputClass} min-w-0 flex-1`} placeholder="Search specialisation" value={search} onChange={(e) => setSearch(e.target.value)} /><button className={buttonClass}>Search</button></form><div className="mt-6 grid gap-6 lg:grid-cols-[1fr_1.2fr]"><div><p className="mb-3 text-sm text-slate-500">{total} doctors found</p><div className="space-y-3">{doctors.map((doctor) => <button className={`w-full rounded-2xl border bg-white p-5 text-left ${selected?.id === doctor.id ? "border-care-500" : "border-slate-200"}`} key={doctor.id} onClick={() => { setSelected(doctor); setPreview(null); setHold(null); }}><span className="block font-semibold">{doctor.full_name}</span><span className="text-sm text-care-700">{doctor.specialisation}</span></button>)}</div><div className="mt-4 flex gap-2"><button className="rounded-lg border px-3 py-2 text-sm disabled:opacity-40" disabled={page <= 1} onClick={() => loadDoctors(page - 1)}>Previous</button><button className="rounded-lg border px-3 py-2 text-sm disabled:opacity-40" disabled={page * 10 >= total} onClick={() => loadDoctors(page + 1)}>Next</button></div></div>
       {selected ? <div className="rounded-2xl border border-slate-200 bg-white p-6"><h3 className="text-xl font-semibold">{selected.full_name}</h3><p className="text-care-700">{selected.specialisation}</p><p className="mt-3 text-sm text-slate-600">{selected.biography}</p><div className="mt-5 flex gap-2"><input className={inputClass} type="date" value={date} onChange={(e) => setDate(e.target.value)} /><button className={buttonClass} onClick={showSlots}>Preview slots</button></div>{preview && <div className="mt-5"><p className="rounded-lg bg-amber-50 p-3 text-xs text-amber-800">{preview.disclaimer}</p><div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">{preview.slots.map((slot) => <button className="rounded-lg border border-care-200 bg-care-50 p-2 text-sm text-care-900 hover:bg-care-100" key={slot.start} onClick={() => holdSlot(slot.start)}>{new Intl.DateTimeFormat([], { hour: "2-digit", minute: "2-digit", timeZone: preview.timezone }).format(new Date(slot.start))}</button>)}</div>{!preview.slots.length && <p className="mt-3 text-sm text-slate-500">No available slots.</p>}</div>}</div> : <div className="rounded-2xl border border-dashed p-10 text-center text-slate-500">Select a doctor.</div>}</div></section>
@@ -147,8 +169,8 @@ export function PatientDashboardPage() {
   );
 }
 
-function AppointmentGroup({ title, items, onCancel, onReschedule }: { title: string; items: AppointmentListItem[]; onCancel?: (id: string) => void; onReschedule?: (id: string) => void }) {
-  return <div className="rounded-2xl border border-slate-200 bg-white p-5"><h3 className="font-semibold">{title}</h3><div className="mt-3 space-y-3">{items.map((item) => <div className="rounded-xl bg-slate-50 p-3 text-sm" key={item.id}><div className="flex justify-between gap-2"><span className="font-medium">{item.doctor_name}</span><StatusBadge status={item.status} /></div><p className="mt-1 text-slate-500">{new Date(item.slot_start).toLocaleString()}</p>{onCancel && item.status !== "cancelled" && <div className="mt-2 flex gap-3"><button className="text-red-600" onClick={() => onCancel(item.id)}>Cancel</button><button className="text-care-700" onClick={() => onReschedule?.(item.id)}>Reschedule</button></div>}</div>)}{!items.length && <p className="text-sm text-slate-500">Nothing here yet.</p>}</div></div>;
+function AppointmentGroup({ title, items, onCancel, onReschedule, onSummary }: { title: string; items: AppointmentListItem[]; onCancel?: (id: string) => void; onReschedule?: (id: string) => void; onSummary?: (id: string) => void }) {
+  return <div className="rounded-2xl border border-slate-200 bg-white p-5"><h3 className="font-semibold">{title}</h3><div className="mt-3 space-y-3">{items.map((item) => <div className="rounded-xl bg-slate-50 p-3 text-sm" key={item.id}><div className="flex justify-between gap-2"><span className="font-medium">{item.doctor_name}</span><StatusBadge status={item.status} /></div><p className="mt-1 text-slate-500">{new Date(item.slot_start).toLocaleString()}</p><div className="mt-2 flex flex-wrap gap-3">{onSummary && <button className="text-care-700" onClick={() => onSummary(item.id)}>Visit summaries</button>}{onCancel && item.status !== "cancelled" && <><button className="text-red-600" onClick={() => onCancel(item.id)}>Cancel</button><button className="text-care-700" onClick={() => onReschedule?.(item.id)}>Reschedule</button></>}</div></div>)}{!items.length && <p className="text-sm text-slate-500">Nothing here yet.</p>}</div></div>;
 }
 
 export function StatusBadge({ status }: { status: string }) {

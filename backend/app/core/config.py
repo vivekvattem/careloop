@@ -18,6 +18,11 @@ class Settings(BaseSettings):
     access_token_minutes: int = Field(default=15, gt=0, le=60)
     refresh_token_days: int = Field(default=7, gt=0, le=30)
     slot_hold_minutes: int = Field(default=5, ge=1, le=15)
+    llm_provider: Literal["openai_compatible"] = "openai_compatible"
+    llm_api_key: str = ""
+    llm_base_url: str = "https://api.groq.com/openai/v1"
+    llm_model: str = "openai/gpt-oss-20b"
+    llm_timeout_seconds: float = Field(default=8, gt=0, le=30)
     frontend_origin: str = "http://localhost:5173"
 
     model_config = SettingsConfigDict(

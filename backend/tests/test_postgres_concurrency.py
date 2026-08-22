@@ -6,7 +6,6 @@ from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import pytest
-from dotenv import dotenv_values
 from sqlalchemy import create_engine, func, inspect, select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import IntegrityError
@@ -16,6 +15,7 @@ from app.db.base import Base
 from app.models.appointment import Appointment, AppointmentStatus
 from app.models.doctor import DoctorProfile, DoctorWorkingHour
 from app.models.user import User, UserRole
+from app.models.visit import CareDocument, CareDocumentType
 from app.schemas.appointment import SymptomInput
 from app.schemas.doctor import LeaveCreate
 from app.services.appointment import (
@@ -24,6 +24,7 @@ from app.services.appointment import (
     InvalidSlotError,
     LeaveConflictService,
 )
+from app.services.visit import HistoryRetriever
 
 pytestmark = pytest.mark.postgresql
 PG_DATE = date(2099, 4, 6)
@@ -32,14 +33,15 @@ PG_ZONE = ZoneInfo("Asia/Kolkata")
 
 def _postgres_url() -> str | None:
     configured = os.getenv("TEST_DATABASE_URL")
-    if configured:
-        return configured
-    if os.getenv("CARELOOP_RUN_POSTGRES_TESTS") == "1":
-        local_values = dotenv_values(".env")
-        return local_values.get("TEST_DATABASE_URL") or local_values.get(
-            "CARELOOP_DATABASE_URL"
-        ) or local_values.get("DATABASE_URL")
-    return None
+    if not configured:
+        return None
+    development_url = (
+        os.getenv("DATABASE_URL")
+        or os.getenv("CARELOOP_DATABASE_URL")
+    )
+    if development_url and make_url(configured) == make_url(development_url):
+        raise RuntimeError("TEST_DATABASE_URL must not equal the development DATABASE_URL")
+    return configured
 
 
 @pytest.fixture(scope="module")
@@ -308,3 +310,56 @@ def test_booking_and_leave_race_never_leaves_confirmed_appointment_on_leave(
             )
         )
     assert confirmed == 0
+
+
+def test_postgresql_history_retrieval_is_patient_scoped_and_ranked(
+    pg_sessions: sessionmaker[Session], pg_case: dict[str, object]
+) -> None:
+    with pg_sessions() as db:
+        prior = Appointment(
+            patient_user_id=pg_case["patient_one"],
+            doctor_profile_id=pg_case["doctor"],
+            slot_start=(pg_case["start"] - timedelta(days=30)).astimezone(timezone.utc),
+            slot_end=(pg_case["start"] - timedelta(days=30) + timedelta(minutes=30)).astimezone(timezone.utc),
+            status=AppointmentStatus.COMPLETED,
+        )
+        current = Appointment(
+            patient_user_id=pg_case["patient_one"],
+            doctor_profile_id=pg_case["doctor"],
+            slot_start=(pg_case["start"] + timedelta(days=30)).astimezone(timezone.utc),
+            slot_end=(pg_case["start"] + timedelta(days=30, minutes=30)).astimezone(timezone.utc),
+            status=AppointmentStatus.COMPLETED,
+        )
+        other = Appointment(
+            patient_user_id=pg_case["patient_two"],
+            doctor_profile_id=pg_case["doctor"],
+            slot_start=(pg_case["start"] - timedelta(days=60)).astimezone(timezone.utc),
+            slot_end=(pg_case["start"] - timedelta(days=60) + timedelta(minutes=30)).astimezone(timezone.utc),
+            status=AppointmentStatus.COMPLETED,
+        )
+        db.add_all([prior, current, other])
+        db.flush()
+        db.add_all([
+            CareDocument(
+                patient_user_id=pg_case["patient_one"], appointment_id=prior.id,
+                document_type=CareDocumentType.CLINICAL_NOTE,
+                content="Recurring fictional headache history", event_date=prior.slot_start,
+                doctor_verified=True,
+            ),
+            CareDocument(
+                patient_user_id=pg_case["patient_two"], appointment_id=other.id,
+                document_type=CareDocumentType.CLINICAL_NOTE,
+                content="Other patient headache history", event_date=other.slot_start,
+                doctor_verified=True,
+            ),
+        ])
+        db.commit()
+        results = HistoryRetriever().retrieve(
+            db,
+            patient_id=pg_case["patient_one"],
+            appointment_id=current.id,
+            query_text="fictional headache",
+        )
+    assert len(results) == 1
+    assert results[0][0].patient_user_id == pg_case["patient_one"]
+    assert results[0][1] > 0

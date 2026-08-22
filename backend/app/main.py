@@ -9,6 +9,7 @@ from app.api.routes import (
     doctor_self,
     doctors,
     health,
+    visits,
 )
 from app.core.config import settings
 
@@ -29,3 +30,5 @@ app.include_router(doctor_self.router, prefix=settings.api_prefix)
 app.include_router(appointments.router, prefix=settings.api_prefix)
 app.include_router(appointment_views.doctor_router, prefix=settings.api_prefix)
 app.include_router(appointment_views.admin_router, prefix=settings.api_prefix)
+app.include_router(visits.patient_router, prefix=settings.api_prefix)
+app.include_router(visits.doctor_router, prefix=settings.api_prefix)

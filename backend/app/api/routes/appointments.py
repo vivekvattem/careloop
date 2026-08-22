@@ -1,7 +1,7 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.api.dependencies.auth import require_roles
 from app.db.session import get_db
@@ -27,6 +27,7 @@ from app.services.appointment import (
     to_detail,
     to_list_item,
 )
+from app.services.visit import run_pre_visit_generation
 
 router = APIRouter(prefix="/appointments", tags=["appointments"])
 
@@ -60,11 +61,15 @@ def create_hold(
 @router.post("", response_model=AppointmentDetail, status_code=status.HTTP_201_CREATED)
 def confirm_appointment(
     data: AppointmentCreate,
+    background_tasks: BackgroundTasks,
     patient: User = Depends(require_roles(UserRole.PATIENT)),
     db: Session = Depends(get_db),
 ) -> AppointmentDetail:
     try:
-        return to_detail(AppointmentService(db).confirm(patient, data.hold_token, data.symptoms))
+        appointment = AppointmentService(db).confirm(patient, data.hold_token, data.symptoms)
+        factory = sessionmaker(bind=db.get_bind(), autoflush=False, expire_on_commit=False)
+        background_tasks.add_task(run_pre_visit_generation, appointment.id, factory)
+        return to_detail(appointment)
     except (
         AppointmentPermissionError,
         DoctorUnavailableError,
@@ -125,6 +130,7 @@ def cancel_appointment(
 def reschedule_appointment(
     appointment_id: UUID,
     data: RescheduleRequest,
+    background_tasks: BackgroundTasks,
     patient: User = Depends(require_roles(UserRole.PATIENT)),
     db: Session = Depends(get_db),
 ) -> AppointmentDetail:
@@ -135,6 +141,8 @@ def reschedule_appointment(
             data.new_hold_token,
             data.reason,
         )
+        factory = sessionmaker(bind=db.get_bind(), autoflush=False, expire_on_commit=False)
+        background_tasks.add_task(run_pre_visit_generation, appointment.id, factory)
         return to_detail(appointment)
     except (
         AppointmentNotFoundError,
@@ -145,4 +153,3 @@ def reschedule_appointment(
         HoldConflictError,
     ) as exc:
         raise _translate(exc) from None
-

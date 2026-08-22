@@ -1,6 +1,6 @@
 # CareLoop
 
-CareLoop is an AI-powered healthcare appointment and follow-up manager for patients, doctors, and administrators. The repository currently contains Phase 1 authentication, **Phase 2A doctor profiles and scheduling foundations**, and **Phase 2B concurrency-safe appointment booking**.
+CareLoop is an AI-powered healthcare appointment and follow-up manager for patients, doctors, and administrators. The repository contains Phase 1 authentication, Phase 2A scheduling, Phase 2B concurrency-safe booking, and **Phase 3 visit intelligence with controlled patient-history RAG**.
 
 ## What Phase 1 includes
 
@@ -38,6 +38,16 @@ The Phase 2A slot endpoint remains a preview. Phase 2B uses those validated slot
 - Leave-conflict preview and confirmed `reschedule_required` transitions
 - PostgreSQL `btree_gist` exclusion constraints preventing overlapping active holds and appointments
 - Deterministic concurrent PostgreSQL tests using isolated schemas
+
+## What Phase 3 includes
+
+- Structured clinical notes and prescriptions controlled only by the assigned doctor
+- Compulsory pre-visit and post-visit generation with deterministic fallback
+- Groq as the documented primary provider through its OpenAI-compatible endpoint
+- Strict JSON Schema responses followed by Pydantic validation
+- Patient-scoped PostgreSQL history retrieval with stored source links
+- Doctor review, edit, approval, rejection, and manual regeneration
+- Patient access only to approved post-visit content
 
 ## Technology stack
 
@@ -77,7 +87,8 @@ careloop/
 └── docs/
     ├── phase-1-foundation.md
     ├── phase-2a-doctor-scheduling.md
-    └── phase-2b-appointment-booking.md
+    ├── phase-2b-appointment-booking.md
+    └── phase-3-ai-visit-intelligence.md
 ```
 
 The additional `backend/app/cli` directory is intentional: it keeps privileged bootstrap operations separate from public HTTP routes.
@@ -109,7 +120,7 @@ cp .env.example .env
 Replace `CARELOOP_JWT_SECRET` in `.env` with a random value of at least 32 characters. Then apply the schema and start the API:
 
 ```bash
-alembic upgrade head
+python -m alembic upgrade head
 uvicorn app.main:app --reload
 ```
 
@@ -118,17 +129,17 @@ The API runs at `http://localhost:8000`; interactive documentation is at `http:/
 ### Alembic commands
 
 ```bash
-# Apply all migrations through Phase 2B
-alembic upgrade head
+# Apply all migrations through Phase 3
+python -m alembic upgrade head
 
 # Create a migration after changing models; inspect the file before applying it
-alembic revision --autogenerate -m "describe the schema change"
+python -m alembic revision --autogenerate -m "describe the schema change"
 
 # Roll back one migration
-alembic downgrade -1
+python -m alembic downgrade -1
 
 # Show current migration state
-alembic current
+python -m alembic current
 ```
 
 Alembic reads the same `CARELOOP_DATABASE_URL` as the application; the URL in `alembic.ini` is only a harmless local fallback.
@@ -250,7 +261,54 @@ pytest -m postgresql
 unset TEST_DATABASE_URL
 ```
 
-The fixture creates a randomly named schema and drops only that schema. For an explicit local-only run against the configured development server—still using an isolated schema—use `CARELOOP_RUN_POSTGRES_TESTS=1`. Never point `TEST_DATABASE_URL` at production.
+The fixture creates a randomly named schema and drops only that schema. Tests refuse to run when `TEST_DATABASE_URL` equals the configured development database URL. Never point it at development or production.
+
+## Phase 3 visit-intelligence flow
+
+Appointment confirmation commits the appointment, original symptoms, a pending pre-visit record, and a patient-scoped symptom document. Only afterward does an in-process background task open a new session and attempt generation. Completion follows the same boundary: clinical note, exact structured prescription, completed status, history, and pending post summary commit before any provider request.
+
+Groq is the documented primary provider, but the implementation uses a small provider interface rather than a Groq-specific SDK:
+
+```env
+CARELOOP_LLM_PROVIDER=openai_compatible
+CARELOOP_LLM_API_KEY=
+CARELOOP_LLM_BASE_URL=https://api.groq.com/openai/v1
+CARELOOP_LLM_MODEL=openai/gpt-oss-20b
+CARELOOP_LLM_TIMEOUT_SECONDS=8
+```
+
+Base URL and model are environment-configurable. A missing key never prevents startup or clinical work; it produces a useful deterministic fallback. Groq requests use `response_format.type=json_schema` with `strict=true`, closed objects, required properties, and nullable unions. Responses are validated again with Pydantic.
+
+`401` authentication and `404` model errors are never retried. Rate limits, timeouts, and transient `5xx` errors are retried at most once. Malformed or schema-invalid output is not retried. Stored failures contain only sanitized categories/messages—never prompts, clinical text, keys, tokens, or raw provider payloads.
+
+Prompt versions are `pre_visit_v1` and `post_visit_v1`. Exact prompts are documented in [Phase 3 visit intelligence](docs/phase-3-ai-visit-intelligence.md) and defined in `backend/app/services/prompts.py`.
+
+### Phase 3 endpoints
+
+```text
+GET  /api/v1/appointments/{id}/pre-visit-summary
+GET  /api/v1/appointments/{id}/post-visit-summary
+
+GET  /api/v1/doctor/me/appointments/{id}/pre-visit-summary
+POST /api/v1/doctor/me/appointments/{id}/pre-visit-summary/regenerate
+POST /api/v1/doctor/me/appointments/{id}/complete
+GET  /api/v1/doctor/me/appointments/{id}/clinical-record
+PUT  /api/v1/doctor/me/appointments/{id}/clinical-record
+GET  /api/v1/doctor/me/appointments/{id}/post-visit-summary
+POST /api/v1/doctor/me/appointments/{id}/post-visit-summary/regenerate
+POST /api/v1/doctor/me/appointments/{id}/post-visit-summary/approve
+POST /api/v1/doctor/me/appointments/{id}/post-visit-summary/reject
+```
+
+Retrieval-augmented generation does not require a vector database; CareLoop retrieves patient-scoped historical context through PostgreSQL search before generation. SQL filters patient ownership, excludes the current appointment and unverified content, ranks relevance/source reliability/recency, and limits context to three records. Source relationships remain inspectable by the assigned doctor.
+
+Post-visit medication schedules are checked against the stored prescription exactly. The doctor may edit explanatory and follow-up text, but prescription-derived content remains authoritative. Patients receive only the approved content, never raw notes or pending/rejected output.
+
+Manual regeneration recovers pending or fallback records. In-process background tasks are best-effort and not durable; Phase 4 should replace them with a persistent outbox/worker.
+
+### Optional live Groq check
+
+Set a non-production API key locally, start the application, book a fictional test appointment, and use the doctor regeneration action. Inspect only the stored status/category; do not print provider output containing patient data. Automated tests always use fake or mock transports and never call Groq.
 
 ## Run the frontend
 
@@ -275,7 +333,7 @@ Production cookies are marked `Secure`. A deployment with frontend and API on un
 
 Backend settings use the `CARELOOP_` prefix and are documented in `backend/.env.example`. Frontend variables use Vite's `VITE_` prefix and are documented in `frontend/.env.example`. Never commit `.env` files.
 
-Development has explicit local fallbacks. When `CARELOOP_ENVIRONMENT=production`, startup rejects the fallback database URL and an absent, short, or development JWT secret. No API key or external-service setting exists through Phase 2B.
+Development has explicit local fallbacks. When `CARELOOP_ENVIRONMENT=production`, startup rejects the fallback database URL and an absent, short, or development JWT secret. LLM configuration remains optional because deterministic fallback is part of normal operation.
 
 ## Tests and checks
 
@@ -293,21 +351,22 @@ Fast business and HTTP tests use an in-memory SQLite engine. Marked PostgreSQL t
 
 ## Current limitations
 
-- No appointment completion workflow or clinician-authored visit notes yet
-- No LLM summaries, failure handling, patient-history retrieval, or RAG yet
-- No reminders, workers, Redis, email provider, retry queue, or Google Calendar OAuth yet
+- In-process summary generation is not durable across process termination
+- RAG uses lexical PostgreSQL search rather than embeddings or semantic vectors
+- Deterministic urgency uses submitted severity bands only and is not diagnostic
+- No reminders, durable workers, Redis, email provider, retry queue, or Google Calendar OAuth yet
 - No password reset, email verification, or refresh-token revocation store
 - Working-hour overlap is service-enforced; exact duplicates and invalid ranges are also database-constrained
 - Hold expiration uses lazy cleanup; a future worker may remove old records for maintenance, not correctness
 - Slot previews do not resolve daylight-saving fold/gap policy beyond Python's IANA timezone conversion
 - The health endpoint verifies connectivity, not deeper database readiness
 
-## Roadmap after Phase 2B review
+## Roadmap after Phase 3 review
 
-1. LLM pre-visit summaries with graceful fallback and a small patient-history RAG step
-2. Post-visit summaries stored in the database
-3. Background medication reminders, durable retries, and SendGrid-compatible email delivery
+1. Transactional outbox and durable worker processing for pending summaries
+2. Medication reminder jobs derived directly from structured prescription times
+3. SendGrid-compatible delivery with retries and delivery history
 4. Google Calendar OAuth 2.0 and appointment synchronization
 5. Security hardening, observability, integration tests, and deployment preparation
 
-Notifications and AI are intentionally deferred until after Phase 2B review.
+Email, reminder workers, and Calendar remain intentionally deferred until Phase 4.
