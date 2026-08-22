@@ -3,6 +3,7 @@ from uuid import UUID
 
 from fastapi import BackgroundTasks
 from fastapi.testclient import TestClient
+import pytest
 from sqlalchemy import func, select
 from sqlalchemy.exc import OperationalError
 
@@ -419,6 +420,107 @@ def test_assigned_doctor_can_update_record_without_duplicate_rows(client: TestCl
     assert response.json()["original_notes"] == changed["clinical_note"]["original_notes"]
     assert note_count == 1
     assert prescription_count == 1
+
+
+def test_prescription_fields_and_multiple_reminders_round_trip_through_api_and_database(
+    client: TestClient,
+) -> None:
+    appointment_id, _, patient_token, _, doctor_token = create_past_appointment()
+    endpoint = f"/api/v1/doctor/me/appointments/{appointment_id}"
+    payload = completion_payload()
+    medication = payload["prescription"]["items"][0]
+    medication.update({
+        "medication_name": "Paracetamol",
+        "dosage": "500 mg",
+        "route": "Oral",
+        "frequency_per_day": 2,
+        "start_date": "2026-08-24",
+        "end_date": "2026-08-27",
+        "reminder_times": ["21:00", "09:00"],
+        "food_instructions": "Take after food",
+        "additional_instructions": "Do not exceed the prescribed dosage",
+    })
+    completed = client.post(f"{endpoint}/complete", json=payload, headers=auth(doctor_token))
+    assert completed.status_code == 200
+    item = completed.json()["items"][0]
+    assert item == medication | {"id": item["id"], "is_active": True, "reminder_times": ["09:00", "21:00"]}
+    with TestingSessionLocal() as db:
+        stored = db.scalar(select(PrescriptionItem).where(PrescriptionItem.id == UUID(item["id"])))
+        summary = db.scalar(select(PostVisitSummary).where(PostVisitSummary.appointment_id == appointment_id))
+    assert stored.reminder_times == ["09:00", "21:00"]
+    assert stored.end_date == date(2026, 8, 27)
+    assert stored.food_instructions == "Take after food"
+    assert stored.additional_instructions == "Do not exceed the prescribed dosage"
+    assert summary.medication_schedule[0]["reminder_times"] == ["09:00", "21:00"]
+    approved = client.post(
+        f"{endpoint}/post-visit-summary/approve", json={}, headers=auth(doctor_token)
+    )
+    assert approved.status_code == 200
+    patient_summary = client.get(
+        f"/api/v1/appointments/{appointment_id}/post-visit-summary", headers=auth(patient_token)
+    )
+    assert patient_summary.json()["approved_content"]["medication_schedule"][0]["additional_instructions"] == "Do not exceed the prescribed dosage"
+
+
+def test_three_reminders_are_kept_when_frequency_permits(client: TestClient) -> None:
+    appointment_id, _, _, _, doctor_token = create_past_appointment()
+    payload = completion_payload()
+    payload["prescription"]["items"][0].update({"frequency_per_day": 3, "reminder_times": ["21:00", "09:00", "14:00"]})
+    response = client.post(
+        f"/api/v1/doctor/me/appointments/{appointment_id}/complete", json=payload, headers=auth(doctor_token)
+    )
+    assert response.status_code == 200
+    assert response.json()["items"][0]["reminder_times"] == ["09:00", "14:00", "21:00"]
+
+
+def test_single_reminder_and_omitted_end_date_round_trip(client: TestClient) -> None:
+    appointment_id, _, _, _, doctor_token = create_past_appointment()
+    payload = completion_payload()
+    payload["prescription"]["items"][0].update({
+        "frequency_per_day": 1,
+        "reminder_times": ["09:00"],
+        "end_date": None,
+    })
+    response = client.post(
+        f"/api/v1/doctor/me/appointments/{appointment_id}/complete", json=payload, headers=auth(doctor_token)
+    )
+    assert response.status_code == 200
+    assert response.json()["items"][0]["reminder_times"] == ["09:00"]
+    assert response.json()["items"][0]["end_date"] is None
+
+
+@pytest.mark.parametrize("changes", [
+    {"reminder_times": ["09:00", "09:00"]},
+    {"reminder_times": ["9:00"]},
+    {"frequency_per_day": 1, "reminder_times": ["09:00", "21:00"]},
+    {"start_date": "2026-08-27", "end_date": "2026-08-24"},
+])
+def test_invalid_prescription_schedule_is_rejected(client: TestClient, changes: dict) -> None:
+    appointment_id, _, _, _, doctor_token = create_past_appointment()
+    payload = completion_payload()
+    payload["prescription"]["items"][0].update(changes)
+    response = client.post(
+        f"/api/v1/doctor/me/appointments/{appointment_id}/complete", json=payload, headers=auth(doctor_token)
+    )
+    assert response.status_code == 422
+
+
+def test_completed_prescription_edit_invalidates_approved_summary(client: TestClient) -> None:
+    appointment_id, _, _, _, doctor_token = create_past_appointment()
+    endpoint = f"/api/v1/doctor/me/appointments/{appointment_id}"
+    assert client.post(f"{endpoint}/complete", json=completion_payload(), headers=auth(doctor_token)).status_code == 200
+    assert client.post(f"{endpoint}/post-visit-summary/approve", json={}, headers=auth(doctor_token)).status_code == 200
+    record = client.get(f"{endpoint}/clinical-record", headers=auth(doctor_token)).json()
+    changed = client.patch(
+        f"{endpoint}/prescriptions/{record['items'][0]['id']}",
+        json={"food_instructions": "Take after meals"}, headers=auth(doctor_token),
+    )
+    assert changed.status_code == 200
+    assert changed.json()["food_instructions"] == "Take after meals"
+    summary = client.get(f"{endpoint}/post-visit-summary", headers=auth(doctor_token)).json()
+    assert summary["status"] == "retry_pending"
+    assert summary["review_status"] == "pending_review"
+    assert summary["approved_content"] is None
 
 
 def test_invented_medication_output_is_replaced_by_exact_fallback() -> None:

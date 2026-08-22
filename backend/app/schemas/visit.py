@@ -1,4 +1,5 @@
 from datetime import date, datetime, time
+import re
 from typing import Literal
 from uuid import UUID
 
@@ -56,6 +57,16 @@ class PrescriptionItemInput(BaseModel):
     additional_instructions: str | None = Field(default=None, max_length=2000)
     is_active: bool = True
 
+    @field_validator("reminder_times", mode="before")
+    @classmethod
+    def reminder_times_are_hhmm(cls, value: object) -> object:
+        if not isinstance(value, list):
+            return value
+        for reminder in value:
+            if isinstance(reminder, str) and not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", reminder):
+                raise ValueError("Reminder times must use HH:MM 24-hour format")
+        return value
+
     @field_validator("medication_name", "dosage")
     @classmethod
     def nonblank(cls, value: str) -> str:
@@ -100,6 +111,7 @@ class UpdateClinicalRecordRequest(CompleteVisitRequest):
 
 class PrescriptionItemPublic(PrescriptionItemInput):
     id: UUID
+    reminder_times: list[str]
 
 
 class ClinicalRecordPublic(BaseModel):
@@ -187,6 +199,22 @@ class PrescriptionItemUpdate(BaseModel):
     food_instructions: str | None = Field(default=None, max_length=255)
     additional_instructions: str | None = Field(default=None, max_length=2000)
     is_active: bool | None = None
+
+    @field_validator("reminder_times", mode="before")
+    @classmethod
+    def reminder_times_are_hhmm(cls, value: object) -> object:
+        return PrescriptionItemInput.reminder_times_are_hhmm(value)
+
+    @model_validator(mode="after")
+    def validate_provided_schedule(self) -> "PrescriptionItemUpdate":
+        if self.end_date is not None and self.start_date is not None and self.end_date < self.start_date:
+            raise ValueError("End date cannot be before start date")
+        if self.reminder_times is not None:
+            if len(set(self.reminder_times)) != len(self.reminder_times):
+                raise ValueError("Reminder times must be unique")
+            if self.frequency_per_day is not None and len(self.reminder_times) > self.frequency_per_day:
+                raise ValueError("Reminder times cannot exceed frequency per day")
+        return self
 
 
 class RegenerationAccepted(BaseModel):

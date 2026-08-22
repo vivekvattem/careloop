@@ -124,7 +124,7 @@ def _medication_schedule(prescription: Prescription) -> list[dict]:
             dosage=item.dosage,
             route=item.route,
             frequency_per_day=item.frequency_per_day,
-            reminder_times=item.reminder_times,
+            reminder_times=sorted(item.reminder_times),
             start_date=item.start_date,
             end_date=item.end_date,
             food_instructions=item.food_instructions,
@@ -133,6 +133,17 @@ def _medication_schedule(prescription: Prescription) -> list[dict]:
         for item in prescription.items
         if item.is_active
     ]
+
+
+def _serialize_reminder_times(values: list) -> list[str]:
+    return sorted(value.isoformat(timespec="minutes") for value in values)
+
+
+def _validate_item_schedule(item: PrescriptionItem) -> None:
+    if len(set(item.reminder_times)) != len(item.reminder_times):
+        raise VisitStateError
+    if len(item.reminder_times) > item.frequency_per_day:
+        raise VisitStateError
 
 
 def _post_fallback(note: ClinicalNote, prescription: Prescription) -> PostVisitLLMOutput:
@@ -458,7 +469,7 @@ class VisitService:
             self.db.add(
                 PrescriptionItem(
                     prescription_id=prescription.id,
-                    reminder_times=[value.isoformat(timespec="minutes") for value in item.reminder_times],
+                    reminder_times=_serialize_reminder_times(item.reminder_times),
                     **fields,
                 )
             )
@@ -513,7 +524,7 @@ class VisitService:
             fields = item.model_dump(exclude={"reminder_times"})
             self.db.add(PrescriptionItem(
                 prescription_id=prescription.id,
-                reminder_times=[value.isoformat(timespec="minutes") for value in item.reminder_times],
+                reminder_times=_serialize_reminder_times(item.reminder_times),
                 **fields,
             ))
         self.db.flush()
@@ -545,7 +556,7 @@ class VisitService:
         fields = data.model_dump(exclude={"reminder_times"})
         item = PrescriptionItem(
             prescription_id=prescription.id,
-            reminder_times=[value.isoformat(timespec="minutes") for value in data.reminder_times],
+            reminder_times=_serialize_reminder_times(data.reminder_times),
             **fields,
         )
         self.db.add(item)
@@ -568,15 +579,14 @@ class VisitService:
             raise VisitNotFoundError
         changes = data.model_dump(exclude_unset=True)
         if "reminder_times" in changes and changes["reminder_times"] is not None:
-            changes["reminder_times"] = [
-                value.isoformat(timespec="minutes") for value in changes["reminder_times"]
-            ]
+            changes["reminder_times"] = _serialize_reminder_times(changes["reminder_times"])
         for field, value in changes.items():
             setattr(item, field, value)
         if not item.medication_name.strip() or not item.dosage.strip():
             raise VisitStateError
         if item.end_date is not None and item.end_date < item.start_date:
             raise VisitStateError
+        _validate_item_schedule(item)
         self._replace_clinical_documents(appointment, note, prescription)
         self._mark_post_summary_for_regeneration(appointment_id)
         self.db.commit()
@@ -759,7 +769,7 @@ class VisitService:
             dosage=item.dosage,
             route=item.route,
             frequency_per_day=item.frequency_per_day,
-            reminder_times=item.reminder_times,
+            reminder_times=sorted(item.reminder_times),
             start_date=item.start_date,
             end_date=item.end_date,
             food_instructions=item.food_instructions,
@@ -786,7 +796,7 @@ class VisitService:
                 dosage=item.dosage,
                 route=item.route,
                 frequency_per_day=item.frequency_per_day,
-                reminder_times=item.reminder_times,
+                reminder_times=sorted(item.reminder_times),
                 start_date=item.start_date,
                 end_date=item.end_date,
                 food_instructions=item.food_instructions,
@@ -809,7 +819,12 @@ class VisitService:
             "general_instructions": data.prescription.general_instructions
         }
         items = [item.model_dump(exclude={"id"}) for item in record.items]
-        return comparable == expected and items == [item.model_dump() for item in data.prescription.items]
+        expected_items = []
+        for item in data.prescription.items:
+            item_data = item.model_dump()
+            item_data["reminder_times"] = _serialize_reminder_times(item.reminder_times)
+            expected_items.append(item_data)
+        return comparable == expected and items == expected_items
 
 
 def pre_summary_public(db: Session, summary: PreVisitSummary) -> PreVisitSummaryPublic:
