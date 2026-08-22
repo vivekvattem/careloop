@@ -14,7 +14,7 @@ from app.services.doctor import DoctorManagementService
 DEMO_DOCTORS: tuple[dict[str, object], ...] = (
     {
         "full_name": "Dr Anaya Rao Demo",
-        "email": "anaya.rao.demo@example.com",
+        "email": "anaya.rao@demo.careloop",
         "specialisation": "Cardiology",
         "qualifications": "MBBS, MD (General Medicine), DM (Cardiology)",
         "biography": "Fictional demo cardiologist focused on preventive heart care and clear patient education.",
@@ -24,7 +24,7 @@ DEMO_DOCTORS: tuple[dict[str, object], ...] = (
     },
     {
         "full_name": "Dr Kabir Sen Demo",
-        "email": "kabir.sen.demo@example.com",
+        "email": "kabir.sen@demo.careloop",
         "specialisation": "Dermatology",
         "qualifications": "MBBS, MD (Dermatology)",
         "biography": "Fictional demo dermatologist interested in evidence-based skin and hair care.",
@@ -34,7 +34,7 @@ DEMO_DOCTORS: tuple[dict[str, object], ...] = (
     },
     {
         "full_name": "Dr Mira Iyer Demo",
-        "email": "mira.iyer.demo@example.com",
+        "email": "mira.iyer@demo.careloop",
         "specialisation": "General Medicine",
         "qualifications": "MBBS, MD (General Medicine)",
         "biography": "Fictional demo physician providing adult primary care and chronic-disease support.",
@@ -44,7 +44,7 @@ DEMO_DOCTORS: tuple[dict[str, object], ...] = (
     },
     {
         "full_name": "Dr Tara Nair Demo",
-        "email": "tara.nair.demo@example.com",
+        "email": "tara.nair@demo.careloop",
         "specialisation": "Paediatrics",
         "qualifications": "MBBS, MD (Paediatrics)",
         "biography": "Fictional demo paediatrician focused on family-centred preventive care.",
@@ -54,7 +54,7 @@ DEMO_DOCTORS: tuple[dict[str, object], ...] = (
     },
     {
         "full_name": "Dr Dev Malhotra Demo",
-        "email": "dev.malhotra.demo@example.com",
+        "email": "dev.malhotra@demo.careloop",
         "specialisation": "Neurology",
         "qualifications": "MBBS, MD (General Medicine), DM (Neurology)",
         "biography": "Fictional demo neurologist supporting patients with headache and movement concerns.",
@@ -64,7 +64,7 @@ DEMO_DOCTORS: tuple[dict[str, object], ...] = (
     },
     {
         "full_name": "Dr Leela Kapoor Demo",
-        "email": "leela.kapoor.demo@example.com",
+        "email": "leela.kapoor@demo.careloop",
         "specialisation": "Orthopaedics",
         "qualifications": "MBBS, MS (Orthopaedics)",
         "biography": "Fictional demo orthopaedic surgeon interested in mobility and non-operative recovery.",

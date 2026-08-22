@@ -152,7 +152,20 @@ unset DEMO_DOCTOR_PASSWORD
 
 Use a password that satisfies the normal rule: at least 10 characters with uppercase and lowercase letters and a number. The command never prints the password. It creates Monday–Saturday schedules in `Asia/Kolkata`, plus one future leave date per doctor.
 
-The seed is idempotent: an existing demo email is skipped, existing records are never deleted, and the final output reports created and skipped counts. It refuses to run when either `ENVIRONMENT=production` or CareLoop's configured environment is production. The six demo login emails end in `.demo@example.com` and are defined in `app/cli/seed_demo_data.py`; they all use the password supplied at execution time.
+The seed is idempotent: an existing demo email is skipped, existing records are never deleted, and the final output reports created and skipped counts. It refuses to run when either `ENVIRONMENT=production` or CareLoop's configured environment is production. The six demo login emails use the `@demo.careloop` domain and are defined in `app/cli/seed_demo_data.py`; they all use the password supplied at execution time.
+
+To reset the password for exactly those six known demo doctor accounts:
+
+```bash
+cd backend
+source .venv/bin/activate
+read -s DEMO_DOCTOR_PASSWORD
+export DEMO_DOCTOR_PASSWORD
+python -m app.cli.reset_demo_doctor_passwords
+unset DEMO_DOCTOR_PASSWORD
+```
+
+The reset command uses the normal Argon2 password utility and repository/session workflow. It never prints the password or resulting hashes, ignores every account outside the six-email allowlist, and reports only updated and skipped totals. Missing, non-doctor, or already-matching demo accounts are skipped. Like the seed command, it refuses to open the database in production.
 
 ## Phase 2A endpoints
 
