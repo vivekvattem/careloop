@@ -333,6 +333,45 @@ def test_assigned_doctor_completion_preserves_sources_and_approval_controls_pati
     assert "original_notes" not in visible.text
 
 
+def test_visit_alias_and_prescription_item_routes_enforce_doctor_ownership(
+    client: TestClient,
+) -> None:
+    appointment_id, _, patient_token, _, doctor_token = create_past_appointment()
+    _, _, other_doctor_token = create_doctor("phase4.other@example.com")
+    endpoint = f"/api/v1/doctor/me/appointments/{appointment_id}"
+    payload = completion_payload()
+    payload["clinical_note"]["private_doctor_notes"] = "Private clinician-only detail."
+    assert client.post(f"{endpoint}/complete", json=payload, headers=auth(doctor_token)).status_code == 200
+
+    visit = client.get(f"{endpoint}/visit", headers=auth(doctor_token))
+    assert visit.status_code == 200
+    assert "private_doctor_notes" in visit.json()
+
+    medication = completion_payload()["prescription"]["items"][0] | {
+        "medication_name": "Second Fictionalmed",
+        "is_active": True,
+    }
+    created = client.post(f"{endpoint}/prescriptions", json=medication, headers=auth(doctor_token))
+    assert created.status_code == 201
+    changed = client.patch(
+        f"{endpoint}/prescriptions/{created.json()['id']}",
+        json={"dosage": "20 mg", "is_active": False},
+        headers=auth(doctor_token),
+    )
+    assert changed.status_code == 200
+    assert changed.json()["is_active"] is False
+    assert client.delete(
+        f"{endpoint}/prescriptions/{created.json()['id']}", headers=auth(doctor_token)
+    ).status_code == 204
+    assert client.post(f"{endpoint}/prescriptions", json=medication, headers=auth(other_doctor_token)).status_code == 404
+    assert client.post(f"{endpoint}/prescriptions", json=medication, headers=auth(patient_token)).status_code == 403
+    visible = client.get(
+        f"/api/v1/appointments/{appointment_id}/post-visit-summary", headers=auth(patient_token)
+    )
+    assert visible.status_code == 200
+    assert "Private clinician-only detail." not in visible.text
+
+
 def test_future_or_invalid_state_completion_rejected_and_rejection_stays_hidden(
     client: TestClient,
 ) -> None:
@@ -400,6 +439,7 @@ def test_invented_medication_output_is_replaced_by_exact_fallback() -> None:
         ],
         "follow_up_steps": ["Follow the doctor's instructions."],
         "warning_signs": [],
+        "safety_disclaimer": "Follow your clinician's instructions and seek urgent care for emergencies.",
     }
     run_post_visit_generation(appointment_id, TestingSessionLocal, FakeProvider(invented))
     with TestingSessionLocal() as db:
@@ -407,7 +447,7 @@ def test_invented_medication_output_is_replaced_by_exact_fallback() -> None:
         prescription = db.scalar(select(Prescription).where(Prescription.appointment_id == appointment_id))
         prescribed_name = prescription.items[0].medication_name
     assert summary.status == GenerationStatus.FALLBACK
-    assert summary.failure_category == "schema_failure"
+    assert summary.failure_category == "prescription_fidelity"
     assert summary.medication_schedule[0]["medication_name"] == "Fictionalmed"
     assert prescribed_name == "Fictionalmed"
 
@@ -440,6 +480,7 @@ def test_valid_post_visit_output_is_stored_without_changing_clinical_note() -> N
         "medication_schedule": schedule,
         "follow_up_steps": ["Return in seven days if symptoms persist."],
         "warning_signs": [],
+        "safety_disclaimer": "Follow your clinician's instructions and seek urgent care for emergencies.",
     }
     run_post_visit_generation(appointment_id, TestingSessionLocal, FakeProvider(output))
     with TestingSessionLocal() as db:
@@ -447,4 +488,5 @@ def test_valid_post_visit_output_is_stored_without_changing_clinical_note() -> N
         summary = db.scalar(select(PostVisitSummary).where(PostVisitSummary.appointment_id == appointment_id))
     assert note.original_notes == completion_payload()["clinical_note"]["original_notes"]
     assert summary.status == GenerationStatus.COMPLETED
+    assert summary.safety_disclaimer
     assert summary.generation_source == GenerationSource.LLM

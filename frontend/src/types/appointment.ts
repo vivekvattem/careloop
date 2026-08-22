@@ -101,14 +101,17 @@ export interface PrescriptionItemInput {
   end_date: string | null;
   food_instructions: string | null;
   additional_instructions: string | null;
+  is_active: boolean;
 }
 
 export interface CompleteVisitInput {
   clinical_note: {
     original_notes: string;
     diagnosis: string | null;
+    treatment_plan: string | null;
     follow_up_instructions: string;
     recommended_follow_up_date: string | null;
+    private_doctor_notes: string | null;
   };
   prescription: { general_instructions: string | null; items: PrescriptionItemInput[] };
 }
@@ -117,12 +120,16 @@ export interface ClinicalRecord {
   appointment_id: string;
   original_notes: string;
   diagnosis: string | null;
+  treatment_plan: string | null;
   follow_up_instructions: string;
   recommended_follow_up_date: string | null;
+  private_doctor_notes: string | null;
   general_instructions: string | null;
   items: Array<PrescriptionItemInput & { id: string }>;
   created_at: string;
   updated_at: string;
+  started_at: string | null;
+  completed_at: string | null;
 }
 
 export interface PostVisitSummary {
@@ -134,6 +141,7 @@ export interface PostVisitSummary {
   medication_schedule: Array<Record<string, unknown>> | null;
   follow_up_steps: string[] | null;
   warning_signs: string[] | null;
+  safety_disclaimer: string | null;
   review_status: "pending_review" | "approved" | "rejected";
   approved_content: Record<string, unknown> | null;
 }
@@ -147,5 +155,6 @@ export interface PatientPostVisitSummary {
     medication_schedule: Array<Record<string, unknown>>;
     follow_up_steps: string[];
     warning_signs: string[];
+    safety_disclaimer: string | null;
   } | null;
 }

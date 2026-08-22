@@ -208,6 +208,28 @@ export const api = {
       { method: "PUT", body: JSON.stringify(input) },
       token,
     ),
+  visitRecord: (token: string, appointmentId: string) =>
+    request<ClinicalRecord>(`/doctor/me/appointments/${appointmentId}/visit`, {}, token),
+  updateVisitRecord: (token: string, appointmentId: string, input: CompleteVisitInput) =>
+    request<ClinicalRecord>(
+      `/doctor/me/appointments/${appointmentId}/visit`,
+      { method: "PUT", body: JSON.stringify(input) },
+      token,
+    ),
+  addPrescriptionItem: (token: string, appointmentId: string, input: CompleteVisitInput["prescription"]["items"][number]) =>
+    request<CompleteVisitInput["prescription"]["items"][number] & { id: string }>(
+      `/doctor/me/appointments/${appointmentId}/prescriptions`,
+      { method: "POST", body: JSON.stringify(input) },
+      token,
+    ),
+  updatePrescriptionItem: (token: string, appointmentId: string, prescriptionId: string, input: Partial<CompleteVisitInput["prescription"]["items"][number]>) =>
+    request<CompleteVisitInput["prescription"]["items"][number] & { id: string }>(
+      `/doctor/me/appointments/${appointmentId}/prescriptions/${prescriptionId}`,
+      { method: "PATCH", body: JSON.stringify(input) },
+      token,
+    ),
+  deletePrescriptionItem: (token: string, appointmentId: string, prescriptionId: string) =>
+    request<void>(`/doctor/me/appointments/${appointmentId}/prescriptions/${prescriptionId}`, { method: "DELETE" }, token),
   doctorPostVisitSummary: (token: string, appointmentId: string) =>
     request<PostVisitSummary>(`/doctor/me/appointments/${appointmentId}/post-visit-summary`, {}, token),
   regeneratePostVisitSummary: (token: string, appointmentId: string) =>

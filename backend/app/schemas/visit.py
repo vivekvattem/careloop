@@ -41,6 +41,7 @@ class PostVisitLLMOutput(StrictOutputModel):
     medication_schedule: list[MedicationScheduleOutput]
     follow_up_steps: list[str]
     warning_signs: list[str]
+    safety_disclaimer: str = Field(min_length=1, max_length=500)
 
 
 class PrescriptionItemInput(BaseModel):
@@ -53,6 +54,7 @@ class PrescriptionItemInput(BaseModel):
     end_date: date | None = None
     food_instructions: str | None = Field(default=None, max_length=255)
     additional_instructions: str | None = Field(default=None, max_length=2000)
+    is_active: bool = True
 
     @field_validator("medication_name", "dosage")
     @classmethod
@@ -81,8 +83,10 @@ class PrescriptionInput(BaseModel):
 class ClinicalNoteInput(BaseModel):
     original_notes: str = Field(min_length=5, max_length=10000)
     diagnosis: str | None = Field(default=None, max_length=2000)
+    treatment_plan: str | None = Field(default=None, max_length=5000)
     follow_up_instructions: str = Field(min_length=2, max_length=5000)
     recommended_follow_up_date: date | None = None
+    private_doctor_notes: str | None = Field(default=None, max_length=10000)
 
 
 class CompleteVisitRequest(BaseModel):
@@ -102,12 +106,16 @@ class ClinicalRecordPublic(BaseModel):
     appointment_id: UUID
     original_notes: str
     diagnosis: str | None
+    treatment_plan: str | None
     follow_up_instructions: str
     recommended_follow_up_date: date | None
+    private_doctor_notes: str | None
     general_instructions: str | None
     items: list[PrescriptionItemPublic]
     created_at: datetime
     updated_at: datetime
+    started_at: datetime | None
+    completed_at: datetime | None
 
 
 class SummaryMetadataPublic(BaseModel):
@@ -148,6 +156,7 @@ class PostVisitSummaryPublic(SummaryMetadataPublic):
     medication_schedule: list[dict] | None
     follow_up_steps: list[str] | None
     warning_signs: list[str] | None
+    safety_disclaimer: str | None
     review_status: ReviewStatus
     reviewed_by_user_id: UUID | None
     reviewed_at: datetime | None
@@ -165,6 +174,19 @@ class PatientPostVisitPublic(BaseModel):
     availability: Literal["awaiting_doctor_review", "approved"]
     generation_source: GenerationSource | None
     approved_content: dict | None
+
+
+class PrescriptionItemUpdate(BaseModel):
+    medication_name: str | None = Field(default=None, min_length=1, max_length=200)
+    dosage: str | None = Field(default=None, min_length=1, max_length=120)
+    route: str | None = Field(default=None, max_length=80)
+    frequency_per_day: int | None = Field(default=None, ge=1, le=24)
+    reminder_times: list[time] | None = Field(default=None, max_length=24)
+    start_date: date | None = None
+    end_date: date | None = None
+    food_instructions: str | None = Field(default=None, max_length=255)
+    additional_instructions: str | None = Field(default=None, max_length=2000)
+    is_active: bool | None = None
 
 
 class RegenerationAccepted(BaseModel):

@@ -74,8 +74,12 @@ class ClinicalNote(TimestampMixin, Base):
     )
     original_notes: Mapped[str] = mapped_column(Text, nullable=False)
     diagnosis: Mapped[str | None] = mapped_column(Text)
+    treatment_plan: Mapped[str | None] = mapped_column(Text)
     follow_up_instructions: Mapped[str] = mapped_column(Text, nullable=False)
     recommended_follow_up_date: Mapped[date | None] = mapped_column(Date)
+    private_doctor_notes: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     appointment: Mapped[Appointment] = relationship()
     doctor: Mapped[User] = relationship()
@@ -109,6 +113,8 @@ class PrescriptionItem(TimestampMixin, Base):
     __table_args__ = (
         CheckConstraint("frequency_per_day BETWEEN 1 AND 24", name="frequency_range"),
         CheckConstraint("end_date IS NULL OR end_date >= start_date", name="valid_date_range"),
+        CheckConstraint("length(trim(medication_name)) > 0", name="medication_name_nonblank"),
+        CheckConstraint("length(trim(dosage)) > 0", name="dosage_nonblank"),
         Index("ix_prescription_items_prescription", "prescription_id"),
     )
 
@@ -125,6 +131,7 @@ class PrescriptionItem(TimestampMixin, Base):
     end_date: Mapped[date | None] = mapped_column(Date)
     food_instructions: Mapped[str | None] = mapped_column(String(255))
     additional_instructions: Mapped[str | None] = mapped_column(Text)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     prescription: Mapped[Prescription] = relationship(back_populates="items")
 
@@ -181,6 +188,7 @@ class PostVisitSummary(SummaryMetadataMixin, TimestampMixin, Base):
     medication_schedule: Mapped[list[dict] | None] = mapped_column(JSON)
     follow_up_steps: Mapped[list[str] | None] = mapped_column(JSON)
     warning_signs: Mapped[list[str] | None] = mapped_column(JSON)
+    safety_disclaimer: Mapped[str | None] = mapped_column(Text)
     review_status: Mapped[ReviewStatus] = mapped_column(
         Enum(ReviewStatus, name="review_status", values_callable=enum_values),
         default=ReviewStatus.PENDING_REVIEW,

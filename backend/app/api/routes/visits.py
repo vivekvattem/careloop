@@ -16,6 +16,9 @@ from app.schemas.visit import (
     PostVisitApprovalRequest,
     PostVisitSummaryPublic,
     PreVisitSummaryPublic,
+    PrescriptionItemInput,
+    PrescriptionItemPublic,
+    PrescriptionItemUpdate,
     RegenerationAccepted,
     UpdateClinicalRecordRequest,
 )
@@ -149,6 +152,18 @@ def clinical_record(
         raise _translate(exc) from None
 
 
+@doctor_router.get("/{appointment_id}/visit", response_model=ClinicalRecordPublic)
+def visit_record(
+    appointment_id: UUID,
+    doctor: User = Depends(require_roles(UserRole.DOCTOR)),
+    db: Session = Depends(get_db),
+) -> ClinicalRecordPublic:
+    try:
+        return VisitService(db).get_record(appointment_id, doctor)
+    except VisitNotFoundError as exc:
+        raise _translate(exc) from None
+
+
 @doctor_router.put("/{appointment_id}/clinical-record", response_model=ClinicalRecordPublic)
 def update_clinical_record(
     appointment_id: UUID,
@@ -163,6 +178,66 @@ def update_clinical_record(
         raise _translate(exc) from None
     background_tasks.add_task(run_post_visit_generation, appointment_id, _factory(db))
     return result
+
+
+@doctor_router.put("/{appointment_id}/visit", response_model=ClinicalRecordPublic)
+def update_visit_record(
+    appointment_id: UUID,
+    data: UpdateClinicalRecordRequest,
+    background_tasks: BackgroundTasks,
+    doctor: User = Depends(require_roles(UserRole.DOCTOR)),
+    db: Session = Depends(get_db),
+) -> ClinicalRecordPublic:
+    try:
+        result = VisitService(db).update_record(appointment_id, doctor, data)
+    except (VisitNotFoundError, VisitPermissionError, VisitStateError) as exc:
+        raise _translate(exc) from None
+    background_tasks.add_task(run_post_visit_generation, appointment_id, _factory(db))
+    return result
+
+
+@doctor_router.post(
+    "/{appointment_id}/prescriptions", response_model=PrescriptionItemPublic, status_code=status.HTTP_201_CREATED
+)
+def add_prescription(
+    appointment_id: UUID,
+    data: PrescriptionItemInput,
+    doctor: User = Depends(require_roles(UserRole.DOCTOR)),
+    db: Session = Depends(get_db),
+) -> PrescriptionItemPublic:
+    try:
+        return VisitService(db).add_prescription_item(appointment_id, doctor, data)
+    except (VisitNotFoundError, VisitPermissionError, VisitStateError) as exc:
+        raise _translate(exc) from None
+
+
+@doctor_router.patch(
+    "/{appointment_id}/prescriptions/{prescription_id}", response_model=PrescriptionItemPublic
+)
+def update_prescription(
+    appointment_id: UUID,
+    prescription_id: UUID,
+    data: PrescriptionItemUpdate,
+    doctor: User = Depends(require_roles(UserRole.DOCTOR)),
+    db: Session = Depends(get_db),
+) -> PrescriptionItemPublic:
+    try:
+        return VisitService(db).update_prescription_item(appointment_id, prescription_id, doctor, data)
+    except (VisitNotFoundError, VisitPermissionError, VisitStateError) as exc:
+        raise _translate(exc) from None
+
+
+@doctor_router.delete("/{appointment_id}/prescriptions/{prescription_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_prescription(
+    appointment_id: UUID,
+    prescription_id: UUID,
+    doctor: User = Depends(require_roles(UserRole.DOCTOR)),
+    db: Session = Depends(get_db),
+) -> None:
+    try:
+        VisitService(db).delete_prescription_item(appointment_id, prescription_id, doctor)
+    except (VisitNotFoundError, VisitPermissionError, VisitStateError) as exc:
+        raise _translate(exc) from None
 
 
 @doctor_router.get("/{appointment_id}/post-visit-summary", response_model=PostVisitSummaryPublic)

@@ -33,6 +33,8 @@ from app.schemas.visit import (
     PostVisitSummaryPublic,
     PreVisitLLMOutput,
     PreVisitSummaryPublic,
+    PrescriptionItemInput,
+    PrescriptionItemUpdate,
     PrescriptionItemPublic,
     RegenerationAccepted,
     SummarySourcePublic,
@@ -129,6 +131,7 @@ def _medication_schedule(prescription: Prescription) -> list[dict]:
             additional_instructions=item.additional_instructions,
         ).model_dump(mode="json")
         for item in prescription.items
+        if item.is_active
     ]
 
 
@@ -145,6 +148,7 @@ def _post_fallback(note: ClinicalNote, prescription: Prescription) -> PostVisitL
         ],
         follow_up_steps=follow_up,
         warning_signs=[],
+        safety_disclaimer="Follow your clinician's instructions and seek urgent care for emergencies.",
     )
 
 
@@ -325,6 +329,7 @@ def run_post_visit_generation(
         note_data = {
             "original_notes": note.original_notes,
             "diagnosis": note.diagnosis,
+            "treatment_plan": note.treatment_plan,
             "follow_up_instructions": note.follow_up_instructions,
             "recommended_follow_up_date": note.recommended_follow_up_date,
         }
@@ -347,18 +352,24 @@ def run_post_visit_generation(
         )
         if [item.model_dump(mode="json") for item in output.medication_schedule] != expected_schedule:
             raise LLMGenerationError(
-                "schema_failure", "LLM medication schedule did not match prescription", attempts
+                "prescription_fidelity", "LLM medication schedule did not match prescription", attempts
             )
         source_text = " ".join(str(value or "") for value in note_data.values()).lower()
         if any(warning.lower() not in source_text for warning in output.warning_signs):
             raise LLMGenerationError(
-                "schema_failure", "LLM warning signs were not present in doctor notes", attempts
+                "prescription_fidelity", "LLM warning signs were not present in doctor notes", attempts
             )
         source = GenerationSource.LLM
         status = GenerationStatus.COMPLETED
     except LLMGenerationError as exc:
         error = exc
         attempts = exc.attempts
+        output = fallback
+        source = GenerationSource.DETERMINISTIC_FALLBACK
+        status = GenerationStatus.FALLBACK
+    except Exception:
+        error = LLMGenerationError("unexpected_error", "LLM summary generation failed", 0)
+        attempts = 0
         output = fallback
         source = GenerationSource.DETERMINISTIC_FALLBACK
         status = GenerationStatus.FALLBACK
@@ -384,6 +395,7 @@ def run_post_visit_generation(
         ]
         summary.follow_up_steps = output.follow_up_steps
         summary.warning_signs = output.warning_signs
+        summary.safety_disclaimer = output.safety_disclaimer
         summary.review_status = ReviewStatus.PENDING_REVIEW
         summary.approved_content = None
         db.commit()
@@ -418,12 +430,17 @@ class VisitService:
             start = start.replace(tzinfo=timezone.utc)
         if start > current:
             raise VisitStateError
-        if appointment.status != AppointmentStatus.CONFIRMED:
+        if appointment.status not in {
+            AppointmentStatus.CONFIRMED,
+            AppointmentStatus.RESCHEDULE_REQUIRED,
+        }:
             raise VisitStateError
 
         note = ClinicalNote(
             appointment_id=appointment.id,
             doctor_user_id=doctor.id,
+            started_at=current,
+            completed_at=current,
             **data.clinical_note.model_dump(),
         )
         self.db.add(note)
@@ -447,10 +464,11 @@ class VisitService:
             )
         self.db.flush()
         self.db.expire(prescription, ["items"])
+        previous_status = appointment.status
         appointment.status = AppointmentStatus.COMPLETED
         self.appointments.create_history(
             appointment,
-            previous_status=AppointmentStatus.CONFIRMED,
+            previous_status=previous_status,
             new_status=AppointmentStatus.COMPLETED,
             actor_user_id=doctor.id,
             reason="Visit completed",
@@ -520,6 +538,63 @@ class VisitService:
             raise VisitNotFoundError
         return record
 
+    def add_prescription_item(
+        self, appointment_id: UUID, doctor: User, data: PrescriptionItemInput
+    ) -> PrescriptionItemPublic:
+        appointment, note, prescription = self._editable_prescription(appointment_id, doctor)
+        fields = data.model_dump(exclude={"reminder_times"})
+        item = PrescriptionItem(
+            prescription_id=prescription.id,
+            reminder_times=[value.isoformat(timespec="minutes") for value in data.reminder_times],
+            **fields,
+        )
+        self.db.add(item)
+        self.db.flush()
+        self._replace_clinical_documents(appointment, note, prescription)
+        self._mark_post_summary_for_regeneration(appointment_id)
+        self.db.commit()
+        return self._item_public(item)
+
+    def update_prescription_item(
+        self,
+        appointment_id: UUID,
+        prescription_item_id: UUID,
+        doctor: User,
+        data: PrescriptionItemUpdate,
+    ) -> PrescriptionItemPublic:
+        appointment, note, prescription = self._editable_prescription(appointment_id, doctor)
+        item = self.db.get(PrescriptionItem, prescription_item_id)
+        if item is None or item.prescription_id != prescription.id:
+            raise VisitNotFoundError
+        changes = data.model_dump(exclude_unset=True)
+        if "reminder_times" in changes and changes["reminder_times"] is not None:
+            changes["reminder_times"] = [
+                value.isoformat(timespec="minutes") for value in changes["reminder_times"]
+            ]
+        for field, value in changes.items():
+            setattr(item, field, value)
+        if not item.medication_name.strip() or not item.dosage.strip():
+            raise VisitStateError
+        if item.end_date is not None and item.end_date < item.start_date:
+            raise VisitStateError
+        self._replace_clinical_documents(appointment, note, prescription)
+        self._mark_post_summary_for_regeneration(appointment_id)
+        self.db.commit()
+        return self._item_public(item)
+
+    def delete_prescription_item(
+        self, appointment_id: UUID, prescription_item_id: UUID, doctor: User
+    ) -> None:
+        appointment, note, prescription = self._editable_prescription(appointment_id, doctor)
+        item = self.db.get(PrescriptionItem, prescription_item_id)
+        if item is None or item.prescription_id != prescription.id:
+            raise VisitNotFoundError
+        self.db.delete(item)
+        self.db.flush()
+        self._replace_clinical_documents(appointment, note, prescription)
+        self._mark_post_summary_for_regeneration(appointment_id)
+        self.db.commit()
+
     def mark_regeneration(
         self, appointment_id: UUID, doctor: User, *, post: bool
     ) -> RegenerationAccepted:
@@ -568,6 +643,7 @@ class VisitService:
             "medication_schedule": summary.medication_schedule or [],
             "follow_up_steps": data.follow_up_steps if data.follow_up_steps is not None else summary.follow_up_steps or [],
             "warning_signs": data.warning_signs if data.warning_signs is not None else summary.warning_signs or [],
+            "safety_disclaimer": summary.safety_disclaimer,
         }
         summary.review_status = ReviewStatus.APPROVED
         summary.reviewed_by_user_id = doctor.id
@@ -609,7 +685,11 @@ class VisitService:
     def _replace_clinical_documents(
         self, appointment: Appointment, note: ClinicalNote, prescription: Prescription
     ) -> None:
-        note_content = f"Diagnosis: {note.diagnosis or 'not recorded'}. Notes: {note.original_notes}. Follow-up: {note.follow_up_instructions}"
+        note_content = (
+            f"Diagnosis: {note.diagnosis or 'not recorded'}. Notes: {note.original_notes}. "
+            f"Treatment plan: {note.treatment_plan or 'not recorded'}. "
+            f"Follow-up: {note.follow_up_instructions}"
+        )
         note_document = self.db.scalar(select(CareDocument).where(
             CareDocument.appointment_id == appointment.id,
             CareDocument.document_type == CareDocumentType.CLINICAL_NOTE,
@@ -628,6 +708,7 @@ class VisitService:
         item_text = "; ".join(
             f"{item.medication_name} {item.dosage} {item.frequency_per_day} time(s) daily"
             for item in prescription.items
+            if item.is_active
         ) or "No medication prescribed"
         prescription_document = self.db.scalar(select(CareDocument).where(
             CareDocument.appointment_id == appointment.id,
@@ -645,6 +726,46 @@ class VisitService:
                 doctor_verified=True,
             ))
 
+    def _editable_prescription(
+        self, appointment_id: UUID, doctor: User
+    ) -> tuple[Appointment, ClinicalNote, Prescription]:
+        appointment = self.appointments.get_appointment(appointment_id, lock=True)
+        if appointment is None or appointment.doctor_profile.user_id != doctor.id:
+            raise VisitNotFoundError
+        if appointment.status != AppointmentStatus.COMPLETED:
+            raise VisitStateError
+        note = self.db.scalar(select(ClinicalNote).where(ClinicalNote.appointment_id == appointment_id))
+        prescription = self.db.scalar(
+            select(Prescription).where(Prescription.appointment_id == appointment_id)
+        )
+        if note is None or prescription is None:
+            raise VisitNotFoundError
+        return appointment, note, prescription
+
+    def _mark_post_summary_for_regeneration(self, appointment_id: UUID) -> None:
+        summary = self.db.scalar(
+            select(PostVisitSummary).where(PostVisitSummary.appointment_id == appointment_id)
+        )
+        if summary is not None:
+            summary.status = GenerationStatus.RETRY_PENDING
+            summary.review_status = ReviewStatus.PENDING_REVIEW
+            summary.approved_content = None
+
+    @staticmethod
+    def _item_public(item: PrescriptionItem) -> PrescriptionItemPublic:
+        return PrescriptionItemPublic(
+            id=item.id,
+            medication_name=item.medication_name,
+            dosage=item.dosage,
+            route=item.route,
+            frequency_per_day=item.frequency_per_day,
+            reminder_times=item.reminder_times,
+            start_date=item.start_date,
+            end_date=item.end_date,
+            food_instructions=item.food_instructions,
+            additional_instructions=item.additional_instructions,
+            is_active=item.is_active,
+        )
     def _record(self, appointment_id: UUID) -> ClinicalRecordPublic | None:
         note = self.db.scalar(select(ClinicalNote).where(ClinicalNote.appointment_id == appointment_id))
         prescription = self.db.scalar(select(Prescription).where(Prescription.appointment_id == appointment_id))
@@ -654,8 +775,10 @@ class VisitService:
             appointment_id=appointment_id,
             original_notes=note.original_notes,
             diagnosis=note.diagnosis,
+            treatment_plan=note.treatment_plan,
             follow_up_instructions=note.follow_up_instructions,
             recommended_follow_up_date=note.recommended_follow_up_date,
+            private_doctor_notes=note.private_doctor_notes,
             general_instructions=prescription.general_instructions,
             items=[PrescriptionItemPublic(
                 id=item.id,
@@ -668,15 +791,21 @@ class VisitService:
                 end_date=item.end_date,
                 food_instructions=item.food_instructions,
                 additional_instructions=item.additional_instructions,
+                is_active=item.is_active,
             ) for item in prescription.items],
             created_at=note.created_at,
             updated_at=note.updated_at,
+            started_at=note.started_at,
+            completed_at=note.completed_at,
         )
 
     @staticmethod
     def _matches(record: ClinicalRecordPublic, data: CompleteVisitRequest) -> bool:
-        comparable = record.model_dump(exclude={"appointment_id", "created_at", "updated_at", "items"})
-        expected = data.clinical_note.model_dump() | {
+        comparable = record.model_dump(exclude={
+            "appointment_id", "created_at", "updated_at", "started_at", "completed_at",
+            "private_doctor_notes", "items"
+        })
+        expected = data.clinical_note.model_dump(exclude={"private_doctor_notes"}) | {
             "general_instructions": data.prescription.general_instructions
         }
         items = [item.model_dump(exclude={"id"}) for item in record.items]
@@ -734,6 +863,7 @@ def post_summary_public(summary: PostVisitSummary) -> PostVisitSummaryPublic:
         medication_schedule=summary.medication_schedule,
         follow_up_steps=summary.follow_up_steps,
         warning_signs=summary.warning_signs,
+        safety_disclaimer=summary.safety_disclaimer,
         review_status=summary.review_status,
         reviewed_by_user_id=summary.reviewed_by_user_id,
         reviewed_at=summary.reviewed_at,

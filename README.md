@@ -49,6 +49,17 @@ The Phase 2A slot endpoint remains a preview. Phase 2B uses those validated slot
 - Doctor review, edit, approval, rejection, and manual regeneration
 - Patient access only to approved post-visit content
 
+## What Phase 4 includes
+
+- Visit treatment-plan, private-note, start, and completion metadata without duplicating Phase 3 clinical records
+- Prescription-item active state and database-level nonblank medication/dosage validation
+- Doctor-only visit aliases and individual prescription-item operations
+- Persisted post-visit safety disclaimer and prescription-fidelity failure category
+- Transactional appointment completion followed by out-of-transaction LLM generation
+- Bounded, row-locked regeneration protection and patient-safe approved summaries
+
+See [Phase 4 documentation](docs/phase-4-post-visit-intelligence.md) for lifecycle, authorization, manual testing, and trade-offs.
+
 ## Technology stack
 
 The backend uses Python 3.12, FastAPI, Pydantic v2, SQLAlchemy 2, Alembic, PostgreSQL/psycopg, PyJWT, Argon2 via `pwdlib`, and Pytest. The frontend uses React, TypeScript, Vite, React Router, and Tailwind CSS. Direct dependencies are pinned in their respective manifests.
