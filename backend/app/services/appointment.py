@@ -196,6 +196,9 @@ class AppointmentService:
             from app.services.visit import create_pending_pre_visit
 
             create_pending_pre_visit(self.db, appointment, symptom_record)
+            from app.models.notification import NotificationEventType
+            from app.services.notifications import enqueue
+            enqueue(self.db, event_type=NotificationEventType.APPOINTMENT_CONFIRMED, recipient=patient, appointment_id=appointment.id, idempotency_key=f"appointment-confirmed:{appointment.id}", payload={"message": "Your CareLoop appointment is confirmed."})
             self.appointments.create_history(
                 appointment,
                 previous_status=None,
@@ -229,6 +232,9 @@ class AppointmentService:
         appointment.status = AppointmentStatus.CANCELLED
         appointment.cancellation_reason = reason
         appointment.cancelled_at = datetime.now(timezone.utc)
+        from app.models.notification import NotificationEventType
+        from app.services.notifications import enqueue
+        enqueue(self.db, event_type=NotificationEventType.APPOINTMENT_CANCELLED, recipient=appointment.patient, appointment_id=appointment.id, idempotency_key=f"appointment-cancelled:{appointment.id}", payload={"message": "Your CareLoop appointment was cancelled."})
         self.appointments.create_history(
             appointment,
             previous_status=previous,

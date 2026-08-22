@@ -24,6 +24,13 @@ class Settings(BaseSettings):
     llm_model: str = "openai/gpt-oss-20b"
     llm_timeout_seconds: float = Field(default=8, gt=0, le=30)
     frontend_origin: str = "http://localhost:5173"
+    email_provider: Literal["log", "sendgrid"] = "log"
+    email_from_address: str = "no-reply@example.com"
+    sendgrid_api_key: str = ""
+    notification_max_attempts: int = Field(default=5, ge=1, le=20)
+    notification_base_retry_seconds: int = Field(default=60, ge=1, le=86400)
+    notification_poll_seconds: int = Field(default=5, ge=1, le=300)
+    notification_stale_claim_seconds: int = Field(default=300, ge=1, le=3600)
 
     model_config = SettingsConfigDict(
         env_file=".env",

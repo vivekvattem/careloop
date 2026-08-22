@@ -14,6 +14,7 @@ from app.models.visit import (
     ReviewStatus,
     Urgency,
 )
+from app.models.notification import MedicationReminderSchedule, NotificationEventType, NotificationOutbox, NotificationStatus
 
 __all__ = [
     "Appointment",
@@ -39,6 +40,10 @@ __all__ = [
     "PreVisitSummarySource",
     "ReviewStatus",
     "Urgency",
+    "MedicationReminderSchedule",
+    "NotificationEventType",
+    "NotificationOutbox",
+    "NotificationStatus",
 ]
 from app.models.appointment import (
     Appointment,

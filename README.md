@@ -2,6 +2,10 @@
 
 CareLoop is an AI-powered healthcare appointment and follow-up manager for patients, doctors, and administrators. The repository contains Phase 1 authentication, Phase 2A scheduling, Phase 2B concurrency-safe booking, and **Phase 3 visit intelligence with controlled patient-history RAG**.
 
+## Phase 5 notifications
+
+Phase 5 adds a durable database outbox and medication reminder worker. In development, run `python -m app.cli.run_notification_worker --once`; the default log provider performs no network delivery. See `docs/phase-5-notifications-and-reminders.md` for retry, idempotency, and optional provider configuration.
+
 ## What Phase 1 includes
 
 - Patient-only public registration with normalized, unique email addresses

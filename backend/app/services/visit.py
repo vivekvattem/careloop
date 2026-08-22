@@ -474,6 +474,9 @@ class VisitService:
                 )
             )
         self.db.flush()
+        from app.services.notifications import reconcile_medication_schedules
+        for item in prescription.items:
+            reconcile_medication_schedules(self.db, item, appointment.patient_user_id)
         self.db.expire(prescription, ["items"])
         previous_status = appointment.status
         appointment.status = AppointmentStatus.COMPLETED
@@ -529,6 +532,9 @@ class VisitService:
             ))
         self.db.flush()
         self.db.expire(prescription, ["items"])
+        from app.services.notifications import reconcile_medication_schedules
+        for item in prescription.items:
+            reconcile_medication_schedules(self.db, item, appointment.patient_user_id)
         self._replace_clinical_documents(appointment, note, prescription)
         summary = self.db.scalar(
             select(PostVisitSummary).where(PostVisitSummary.appointment_id == appointment_id)
@@ -561,6 +567,8 @@ class VisitService:
         )
         self.db.add(item)
         self.db.flush()
+        from app.services.notifications import reconcile_medication_schedules
+        reconcile_medication_schedules(self.db, item, appointment.patient_user_id)
         self._replace_clinical_documents(appointment, note, prescription)
         self._mark_post_summary_for_regeneration(appointment_id)
         self.db.commit()
@@ -587,6 +595,8 @@ class VisitService:
         if item.end_date is not None and item.end_date < item.start_date:
             raise VisitStateError
         _validate_item_schedule(item)
+        from app.services.notifications import reconcile_medication_schedules
+        reconcile_medication_schedules(self.db, item, appointment.patient_user_id)
         self._replace_clinical_documents(appointment, note, prescription)
         self._mark_post_summary_for_regeneration(appointment_id)
         self.db.commit()
@@ -659,6 +669,9 @@ class VisitService:
         summary.reviewed_by_user_id = doctor.id
         summary.reviewed_at = datetime.now(timezone.utc)
         summary.approved_content = approved
+        from app.models.notification import NotificationEventType
+        from app.services.notifications import enqueue
+        enqueue(self.db, event_type=NotificationEventType.POST_VISIT_APPROVED, recipient=appointment.patient, appointment_id=appointment.id, idempotency_key=f"post-visit-approved:{appointment.id}:{summary.updated_at.isoformat() if summary.updated_at else 'new'}", payload={"message": "Your post-visit summary is available in CareLoop."})
         approved_text = f"Visit summary: {approved['patient_friendly_summary']}. Follow-up: {'; '.join(approved['follow_up_steps'])}"
         document = self.db.scalar(select(CareDocument).where(
             CareDocument.appointment_id == appointment.id,

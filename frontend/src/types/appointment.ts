@@ -92,6 +92,7 @@ export interface PreVisitSummary {
 }
 
 export interface PrescriptionItemInput {
+  id?: string;
   medication_name: string;
   dosage: string;
   route: string | null;
