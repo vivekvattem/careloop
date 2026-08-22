@@ -11,6 +11,13 @@ import type {
   WorkingHour,
   WorkingHourInput,
 } from "../types/doctor";
+import type {
+  AppointmentDetail,
+  AppointmentListItem,
+  HoldResponse,
+  LeaveConflictPreview,
+  SymptomInput,
+} from "../types/appointment";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000/api/v1";
 
@@ -18,6 +25,7 @@ export class ApiError extends Error {
   constructor(
     message: string,
     public readonly status: number,
+    public readonly detail?: unknown,
   ) {
     super(message);
   }
@@ -45,8 +53,14 @@ async function request<T>(
     const detail = body?.detail;
     const message = Array.isArray(detail)
       ? detail.map((item) => item.msg ?? "Invalid value").join(". ")
-      : detail;
-    throw new ApiError(message ?? "Something went wrong. Please try again.", response.status);
+      : typeof detail === "string"
+        ? detail
+        : undefined;
+    throw new ApiError(
+      message ?? (response.status === 409 ? "The request conflicts with current availability." : "Something went wrong. Please try again."),
+      response.status,
+      detail,
+    );
   }
 
   if (response.status === 204) return undefined as T;
@@ -100,9 +114,9 @@ export const api = {
       { method: "DELETE" },
       token,
     ),
-  adminAddLeave: (token: string, doctorId: string, leaveDate: string, reason: string) =>
-    request<DoctorLeave>(
-      `/admin/doctors/${doctorId}/leave`,
+  adminAddLeave: (token: string, doctorId: string, leaveDate: string, reason: string, confirmConflicts = false) =>
+    request<DoctorLeave & { affected_count: number; affected_appointment_ids: string[] }>(
+      `/admin/doctors/${doctorId}/leave?confirm_conflicts=${confirmConflicts}`,
       { method: "POST", body: JSON.stringify({ leave_date: leaveDate, reason: reason || null }) },
       token,
     ),
@@ -125,4 +139,42 @@ export const api = {
   doctorSchedule: (token: string) => request<DoctorSchedule>("/doctor/me/schedule", {}, token),
   doctorLeave: (token: string) =>
     request<{ leaves: DoctorLeave[] }>("/doctor/me/leave", {}, token),
+  holdSlot: (token: string, doctorId: string, slotStart: string) =>
+    request<HoldResponse>(
+      "/appointments/holds",
+      { method: "POST", body: JSON.stringify({ doctor_id: doctorId, slot_start: slotStart }) },
+      token,
+    ),
+  confirmAppointment: (token: string, holdToken: string, symptoms: SymptomInput) =>
+    request<AppointmentDetail>(
+      "/appointments",
+      { method: "POST", body: JSON.stringify({ hold_token: holdToken, symptoms }) },
+      token,
+    ),
+  patientAppointments: (token: string) =>
+    request<Paginated<AppointmentListItem>>("/appointments/me", {}, token),
+  cancelAppointment: (token: string, appointmentId: string, reason: string) =>
+    request<AppointmentDetail>(
+      `/appointments/${appointmentId}/cancel`,
+      { method: "POST", body: JSON.stringify({ reason }) },
+      token,
+    ),
+  rescheduleAppointment: (token: string, appointmentId: string, holdToken: string) =>
+    request<AppointmentDetail>(
+      `/appointments/${appointmentId}/reschedule`,
+      { method: "POST", body: JSON.stringify({ new_hold_token: holdToken, reason: "Rescheduled by patient" }) },
+      token,
+    ),
+  doctorAppointments: (token: string) =>
+    request<Paginated<AppointmentListItem>>("/doctor/me/appointments", {}, token),
+  doctorAppointment: (token: string, appointmentId: string) =>
+    request<AppointmentDetail>(`/doctor/me/appointments/${appointmentId}`, {}, token),
+  adminAppointments: (token: string) =>
+    request<Paginated<AppointmentListItem>>("/admin/appointments", {}, token),
+  leaveConflicts: (token: string, doctorId: string, date: string) =>
+    request<LeaveConflictPreview>(
+      `/admin/doctors/${doctorId}/leave-conflicts?date=${encodeURIComponent(date)}`,
+      {},
+      token,
+    ),
 };

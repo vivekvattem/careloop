@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -255,7 +255,7 @@ class SlotGenerationService:
         profile = self.doctors.get_by_id(doctor_id)
         if profile is None:
             raise DoctorNotFoundError
-        timezone = ZoneInfo(profile.timezone)
+        doctor_timezone = ZoneInfo(profile.timezone)
 
         if not profile.user.is_active or not profile.is_available_for_booking:
             return self._empty(profile, requested_date, "doctor_inactive")
@@ -268,20 +268,36 @@ class SlotGenerationService:
         if not intervals:
             return self._empty(profile, requested_date, "no_working_hours")
 
-        local_now = (now or datetime.now(timezone)).astimezone(timezone)
+        local_now = (now or datetime.now(doctor_timezone)).astimezone(doctor_timezone)
         duration = timedelta(minutes=profile.slot_duration_minutes)
         generated: dict[tuple[datetime, datetime], Slot] = {}
         for interval in intervals:
-            cursor = datetime.combine(requested_date, interval.start_time, timezone)
-            interval_end = datetime.combine(requested_date, interval.end_time, timezone)
+            cursor = datetime.combine(requested_date, interval.start_time, doctor_timezone)
+            interval_end = datetime.combine(requested_date, interval.end_time, doctor_timezone)
             while cursor + duration <= interval_end:
                 slot_end = cursor + duration
                 if cursor > local_now:
                     generated[(cursor, slot_end)] = Slot(start=cursor, end=slot_end)
                 cursor = slot_end
 
-        # Phase 2B filters existing appointments and active holds before returning.
-        slots = [generated[key] for key in sorted(generated)]
+        from app.repositories.appointment import AppointmentRepository
+
+        appointment_repository = AppointmentRepository(self.doctors.db)
+        appointment_repository.expire_holds(local_now.astimezone(timezone.utc), doctor_id)
+        slots = [
+            generated[key]
+            for key in sorted(generated)
+            if not appointment_repository.has_active_hold_overlap(
+                doctor_id,
+                generated[key].start.astimezone(timezone.utc),
+                generated[key].end.astimezone(timezone.utc),
+            )
+            and not appointment_repository.has_active_appointment_overlap(
+                doctor_id,
+                generated[key].start.astimezone(timezone.utc),
+                generated[key].end.astimezone(timezone.utc),
+            )
+        ]
         return SlotPreview(
             doctor_id=profile.id,
             date=requested_date,
@@ -303,4 +319,3 @@ class SlotGenerationService:
             availability=availability,
             slots=[],
         )
-

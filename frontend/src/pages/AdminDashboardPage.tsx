@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 
 import { ApiError, api } from "../api/client";
 import { useAuth } from "../contexts/AuthContext";
+import type { AppointmentListItem } from "../types/appointment";
 import type { DoctorAdmin, DoctorProvisionInput, WorkingHourInput } from "../types/doctor";
 
 const inputClass = "w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm";
@@ -29,6 +30,7 @@ function message(error: unknown) {
 export function AdminDashboardPage() {
   const { accessToken } = useAuth();
   const [doctors, setDoctors] = useState<DoctorAdmin[]>([]);
+  const [appointments, setAppointments] = useState<AppointmentListItem[]>([]);
   const [selected, setSelected] = useState<DoctorAdmin | null>(null);
   const [createForm, setCreateForm] = useState(emptyDoctor);
   const [showCreate, setShowCreate] = useState(false);
@@ -47,7 +49,11 @@ export function AdminDashboardPage() {
   };
 
   useEffect(() => {
-    loadDoctors().catch((caught) => setError(message(caught)));
+    if (!accessToken) return;
+    Promise.all([
+      loadDoctors(),
+      api.adminAppointments(accessToken).then((result) => setAppointments(result.items)),
+    ]).catch((caught) => setError(message(caught)));
   }, [accessToken]);
 
   const createDoctor = async (event: FormEvent) => {
@@ -107,6 +113,15 @@ export function AdminDashboardPage() {
         </form>
       )}
 
+      <div className="mt-8 rounded-2xl border border-slate-200 bg-white p-6">
+        <h2 className="text-xl font-semibold">Appointments</h2>
+        <p className="mt-1 text-sm text-slate-500">Operational status only; symptom details are not included here.</p>
+        <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          {appointments.map((item) => <div className="rounded-lg bg-slate-50 p-3 text-sm" key={item.id}><div className="flex justify-between gap-2"><span className="font-medium">{item.doctor_name}</span><span className="capitalize text-slate-500">{item.status.replaceAll("_", " ")}</span></div><p className="mt-1 text-slate-500">{item.patient_name} · {new Date(item.slot_start).toLocaleString()}</p></div>)}
+          {!appointments.length && <p className="text-sm text-slate-500">No appointments yet.</p>}
+        </div>
+      </div>
+
       <div className="mt-8 grid gap-6 lg:grid-cols-[300px_1fr]">
         <aside className="rounded-2xl border border-slate-200 bg-white p-4">
           <h2 className="px-2 pb-3 font-semibold">All doctors ({doctors.length})</h2>
@@ -137,6 +152,7 @@ function DoctorManager({ doctor, token, onChanged, onError }: { doctor: DoctorAd
   const [editingHour, setEditingHour] = useState<string | null>(null);
   const [leaveDate, setLeaveDate] = useState("");
   const [leaveReason, setLeaveReason] = useState("");
+  const [leaveNotice, setLeaveNotice] = useState("");
 
   useEffect(() => setProfile(doctor), [doctor]);
 
@@ -177,6 +193,33 @@ function DoctorManager({ doctor, token, onChanged, onError }: { doctor: DoctorAd
     });
   };
 
+  const saveLeave = async (event: FormEvent) => {
+    event.preventDefault();
+    onError("");
+    try {
+      const preview = await api.leaveConflicts(token, doctor.id, leaveDate);
+      const confirmed = preview.affected_count === 0 || window.confirm(
+        `This leave affects ${preview.affected_count} active appointment(s). Mark them as reschedule required?`,
+      );
+      if (!confirmed) return;
+      const result = await api.adminAddLeave(
+        token,
+        doctor.id,
+        leaveDate,
+        leaveReason,
+        preview.affected_count > 0,
+      );
+      setLeaveNotice(
+        `Leave applied. ${result.affected_count} appointment(s) marked reschedule required.`,
+      );
+      setLeaveDate("");
+      setLeaveReason("");
+      await onChanged();
+    } catch (caught) {
+      onError(message(caught));
+    }
+  };
+
   return (
     <div className="space-y-6">
       <form className="grid gap-4 rounded-2xl border border-slate-200 bg-white p-6 sm:grid-cols-2" onSubmit={saveProfile}>
@@ -206,15 +249,15 @@ function DoctorManager({ doctor, token, onChanged, onError }: { doctor: DoctorAd
 
       <div className="rounded-2xl border border-slate-200 bg-white p-6">
         <h2 className="text-xl font-semibold">Full-day leave</h2>
+        {leaveNotice && <p className="mt-3 rounded-lg bg-care-50 p-3 text-sm text-care-800">{leaveNotice}</p>}
         <div className="mt-4 space-y-2">{doctor.leaves.map((item) => <div className="flex items-center justify-between rounded-lg bg-slate-50 p-3 text-sm" key={item.id}><span>{item.leave_date}{item.reason ? ` · ${item.reason}` : ""}</span><button className="text-red-600" type="button" onClick={() => run(() => api.adminDeleteLeave(token, doctor.id, item.id))}>Remove</button></div>)}</div>
-        <form className="mt-4 grid gap-3 sm:grid-cols-[180px_1fr_auto]" onSubmit={(event) => { event.preventDefault(); run(async () => { await api.adminAddLeave(token, doctor.id, leaveDate, leaveReason); setLeaveDate(""); setLeaveReason(""); }); }}>
+        <form className="mt-4 grid gap-3 sm:grid-cols-[180px_1fr_auto]" onSubmit={saveLeave}>
           <input className={inputClass} type="date" required value={leaveDate} onChange={(e) => setLeaveDate(e.target.value)} />
           <input className={inputClass} placeholder="Optional private reason" value={leaveReason} onChange={(e) => setLeaveReason(e.target.value)} />
           <button className={buttonClass} type="submit">Add leave</button>
         </form>
-        <p className="mt-3 text-xs text-slate-500">Appointment-conflict notifications will be added with booking in Phase 2B.</p>
+        <p className="mt-3 text-xs text-slate-500">Conflicts are previewed first. Confirmed leave marks affected appointments as reschedule required; notifications arrive later.</p>
       </div>
     </div>
   );
 }
-

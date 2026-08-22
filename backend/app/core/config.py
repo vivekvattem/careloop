@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     jwt_algorithm: Literal["HS256", "HS384", "HS512"] = "HS256"
     access_token_minutes: int = Field(default=15, gt=0, le=60)
     refresh_token_days: int = Field(default=7, gt=0, le=30)
+    slot_hold_minutes: int = Field(default=5, ge=1, le=15)
     frontend_origin: str = "http://localhost:5173"
 
     model_config = SettingsConfigDict(
@@ -46,4 +47,3 @@ def get_settings() -> Settings:
 
 
 settings = get_settings()
-

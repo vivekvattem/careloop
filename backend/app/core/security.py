@@ -1,4 +1,6 @@
 from datetime import datetime, timedelta, timezone
+import hashlib
+import secrets
 from typing import Literal
 from uuid import UUID
 
@@ -30,6 +32,14 @@ def hash_password(password: str) -> str:
 
 def verify_password(password: str, password_hash: str) -> bool:
     return password_hasher.verify(password, password_hash)
+
+
+def generate_hold_token() -> str:
+    return secrets.token_urlsafe(32)
+
+
+def hash_hold_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
 def _create_token(user: User, token_type: Literal["access", "refresh"]) -> str:
@@ -72,4 +82,3 @@ def decode_token(token: str, expected_type: Literal["access", "refresh"]) -> Tok
     if claims.token_type != expected_type:
         raise InvalidTokenError
     return claims
-

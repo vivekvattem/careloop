@@ -1,6 +1,6 @@
 # CareLoop
 
-CareLoop is an AI-powered healthcare appointment and follow-up manager for patients, doctors, and administrators. The repository currently contains Phase 1 authentication and **Phase 2A doctor profiles and scheduling foundations**.
+CareLoop is an AI-powered healthcare appointment and follow-up manager for patients, doctors, and administrators. The repository currently contains Phase 1 authentication, **Phase 2A doctor profiles and scheduling foundations**, and **Phase 2B concurrency-safe appointment booking**.
 
 ## What Phase 1 includes
 
@@ -26,7 +26,18 @@ CareLoop is an AI-powered healthcare appointment and follow-up manager for patie
 - Deterministic timezone-aware slot previews with past, leave, and inactive filtering
 - Functional role-specific frontend workflows for all three roles
 
-Slot output is a preview only. No appointment, hold, or booking record is created.
+The Phase 2A slot endpoint remains a preview. Phase 2B uses those validated slots to create short-lived holds and confirmed appointment records.
+
+## What Phase 2B includes
+
+- Five-minute, configurable, opaque-token slot holds
+- Structured patient symptom submission before confirmation
+- Transactional appointment confirmation and atomic rescheduling
+- Patient cancellation with status history and restored availability
+- Patient and doctor appointment views plus a paginated admin list
+- Leave-conflict preview and confirmed `reschedule_required` transitions
+- PostgreSQL `btree_gist` exclusion constraints preventing overlapping active holds and appointments
+- Deterministic concurrent PostgreSQL tests using isolated schemas
 
 ## Technology stack
 
@@ -65,7 +76,8 @@ careloop/
 │   └── package.json
 └── docs/
     ├── phase-1-foundation.md
-    └── phase-2a-doctor-scheduling.md
+    ├── phase-2a-doctor-scheduling.md
+    └── phase-2b-appointment-booking.md
 ```
 
 The additional `backend/app/cli` directory is intentional: it keeps privileged bootstrap operations separate from public HTTP routes.
@@ -106,7 +118,7 @@ The API runs at `http://localhost:8000`; interactive documentation is at `http:/
 ### Alembic commands
 
 ```bash
-# Apply Phase 1 and Phase 2A migrations
+# Apply all migrations through Phase 2B
 alembic upgrade head
 
 # Create a migration after changing models; inspect the file before applying it
@@ -195,7 +207,50 @@ Admin routes require the admin role, discovery routes require the patient role, 
 
 The service finds the requested weekday's intervals in the doctor's IANA timezone and divides each interval by the configured duration. It drops partial final slots, already-started slots, duplicates, leave dates, and all slots for inactive or unavailable doctors. Results are chronological, timezone-aware ISO-8601 timestamps.
 
-Generated slots are not guarantees. Phase 2B must atomically exclude appointments and active holds when booking.
+Generated slots are not guarantees. Confirmation atomically revalidates appointments, active holds, schedule, doctor state, and leave.
+
+## Appointment booking flow
+
+1. The patient previews slots; this is never a guarantee.
+2. `POST /api/v1/appointments/holds` revalidates the schedule and creates a five-minute hold. Only a SHA-256 hash of the random token is stored.
+3. `POST /api/v1/appointments` locks and verifies the hold, rechecks doctor/schedule/leave/conflicts, creates the appointment, symptom submission and history, then consumes the hold in one commit.
+4. PostgreSQL exclusion constraints are the final defense if concurrent requests race.
+
+`CARELOOP_SLOT_HOLD_MINUTES` configures hold lifetime and defaults to `5`. Expired holds are lazily marked during relevant requests; no cleanup worker is required for correctness.
+
+### Appointment endpoints
+
+```text
+POST /api/v1/appointments/holds
+POST /api/v1/appointments
+GET  /api/v1/appointments/me
+GET  /api/v1/appointments/{appointment_id}
+POST /api/v1/appointments/{appointment_id}/cancel
+POST /api/v1/appointments/{appointment_id}/reschedule
+
+GET  /api/v1/doctor/me/appointments
+GET  /api/v1/doctor/me/appointments/{appointment_id}
+GET  /api/v1/admin/appointments
+GET  /api/v1/admin/doctors/{doctor_id}/leave-conflicts?date=YYYY-MM-DD
+```
+
+Cancellation changes the original row to `cancelled`, which removes it from the active-overlap constraint. Rescheduling creates a linked replacement and copies the original symptom submission; it never overwrites the original appointment's time.
+
+When leave affects appointments, the preview endpoint makes no changes. Leave creation returns `409` until repeated with `?confirm_conflicts=true`; confirmed application creates the leave, marks every active conflict `reschedule_required`, and records history in one transaction.
+
+### PostgreSQL concurrency tests
+
+Use a dedicated test database URL whenever possible:
+
+```bash
+cd backend
+source .venv/bin/activate
+export TEST_DATABASE_URL='postgresql+psycopg://user:password@localhost:5432/careloop_test'
+pytest -m postgresql
+unset TEST_DATABASE_URL
+```
+
+The fixture creates a randomly named schema and drops only that schema. For an explicit local-only run against the configured development server—still using an isolated schema—use `CARELOOP_RUN_POSTGRES_TESTS=1`. Never point `TEST_DATABASE_URL` at production.
 
 ## Run the frontend
 
@@ -220,7 +275,7 @@ Production cookies are marked `Secure`. A deployment with frontend and API on un
 
 Backend settings use the `CARELOOP_` prefix and are documented in `backend/.env.example`. Frontend variables use Vite's `VITE_` prefix and are documented in `frontend/.env.example`. Never commit `.env` files.
 
-Development has explicit local fallbacks. When `CARELOOP_ENVIRONMENT=production`, startup rejects the fallback database URL and an absent, short, or development JWT secret. No API key or external-service setting exists through Phase 2A.
+Development has explicit local fallbacks. When `CARELOOP_ENVIRONMENT=production`, startup rejects the fallback database URL and an absent, short, or development JWT secret. No API key or external-service setting exists through Phase 2B.
 
 ## Tests and checks
 
@@ -234,25 +289,25 @@ cd ../frontend
 npm run build
 ```
 
-Tests use an in-memory SQLite engine to isolate business and HTTP behavior. PostgreSQL remains the runtime database and Alembic migration target; applying the migration to PostgreSQL is the integration check for dialect-specific behavior.
+Fast business and HTTP tests use an in-memory SQLite engine. Marked PostgreSQL tests use separate connections and randomly named schemas for real exclusion-constraint races and the isolated migration downgrade/upgrade round trip.
 
 ## Current limitations
 
-- No appointment booking, availability holds, or appointment conflict checks yet
+- No appointment completion workflow or clinician-authored visit notes yet
 - No LLM summaries, failure handling, patient-history retrieval, or RAG yet
 - No reminders, workers, Redis, email provider, retry queue, or Google Calendar OAuth yet
 - No password reset, email verification, or refresh-token revocation store
 - Working-hour overlap is service-enforced; exact duplicates and invalid ranges are also database-constrained
-- Slot previews do not account for daylight-saving ambiguities beyond Python's IANA timezone conversion
+- Hold expiration uses lazy cleanup; a future worker may remove old records for maintenance, not correctness
+- Slot previews do not resolve daylight-saving fold/gap policy beyond Python's IANA timezone conversion
 - The health endpoint verifies connectivity, not deeper database readiness
 
-## Roadmap after Phase 2A review
+## Roadmap after Phase 2B review
 
-1. Transactional, conflict-safe appointment booking, short-lived slot holds, cancellation, and doctor-leave conflict handling
-2. LLM pre-visit summaries with graceful fallback and a small patient-history RAG step
-3. Post-visit summaries stored in the database
-4. Background medication reminders, durable retries, and SendGrid-compatible email delivery
-5. Google Calendar OAuth 2.0 and appointment synchronization
-6. Security hardening, observability, integration tests, and deployment preparation
+1. LLM pre-visit summaries with graceful fallback and a small patient-history RAG step
+2. Post-visit summaries stored in the database
+3. Background medication reminders, durable retries, and SendGrid-compatible email delivery
+4. Google Calendar OAuth 2.0 and appointment synchronization
+5. Security hardening, observability, integration tests, and deployment preparation
 
-Appointment booking is the next phase and should begin only after Phase 2A has been reviewed.
+Notifications and AI are intentionally deferred until after Phase 2B review.

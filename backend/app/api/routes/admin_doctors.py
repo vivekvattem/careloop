@@ -1,5 +1,7 @@
 from uuid import UUID
 
+from datetime import date
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
@@ -17,6 +19,12 @@ from app.schemas.doctor import (
     WorkingHourCreate,
     WorkingHourPublic,
     WorkingHourUpdate,
+)
+from app.schemas.appointment import LeaveApplyResult, LeaveConflictPreview
+from app.services.appointment import (
+    DoctorUnavailableError,
+    LeaveConflictError,
+    LeaveConflictService,
 )
 from app.services.doctor import (
     DoctorManagementService,
@@ -148,20 +156,50 @@ def delete_working_hour(
 
 @router.post(
     "/{doctor_id}/leave",
-    response_model=LeaveAdmin,
+    response_model=LeaveApplyResult,
     status_code=status.HTTP_201_CREATED,
 )
 def add_leave(
     doctor_id: UUID,
     data: LeaveCreate,
+    confirm_conflicts: bool = Query(default=False),
+    admin: User = Depends(require_roles(UserRole.ADMIN)),
     db: Session = Depends(get_db),
-) -> LeaveAdmin:
+) -> LeaveApplyResult:
     try:
-        return to_leave_admin(DoctorManagementService(db).add_leave(doctor_id, data))
-    except DoctorNotFoundError:
+        return LeaveConflictService(db).apply(
+            doctor_id,
+            data,
+            confirmed=confirm_conflicts,
+            actor_user_id=admin.id,
+        )
+    except (DoctorNotFoundError, DoctorUnavailableError):
         raise _not_found() from None
     except DuplicateLeaveError:
         raise HTTPException(status_code=409, detail="Leave already exists for this date") from None
+    except LeaveConflictError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "leave_conflicts",
+                "affected_count": exc.preview.affected_count,
+                "appointment_ids": [
+                    str(item.appointment_id) for item in exc.preview.appointments
+                ],
+            },
+        ) from None
+
+
+@router.get("/{doctor_id}/leave-conflicts", response_model=LeaveConflictPreview)
+def preview_leave_conflicts(
+    doctor_id: UUID,
+    date_: date = Query(alias="date"),
+    db: Session = Depends(get_db),
+) -> LeaveConflictPreview:
+    try:
+        return LeaveConflictService(db).preview(doctor_id, date_)
+    except DoctorUnavailableError:
+        raise _not_found() from None
 
 
 @router.delete(
@@ -176,4 +214,3 @@ def delete_leave(
         DoctorManagementService(db).delete_leave(doctor_id, leave_id)
     except DoctorNotFoundError:
         raise _not_found() from None
-
