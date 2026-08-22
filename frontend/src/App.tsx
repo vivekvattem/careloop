@@ -2,10 +2,12 @@ import { Route, Routes } from "react-router-dom";
 
 import { DashboardLayout } from "./layouts/DashboardLayout";
 import { SiteLayout } from "./layouts/SiteLayout";
-import { DashboardPage } from "./pages/DashboardPage";
+import { AdminDashboardPage } from "./pages/AdminDashboardPage";
+import { DoctorDashboardPage } from "./pages/DoctorDashboardPage";
 import { LandingPage } from "./pages/LandingPage";
 import { LoginPage } from "./pages/LoginPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
+import { PatientDashboardPage } from "./pages/PatientDashboardPage";
 import { RegisterPage } from "./pages/RegisterPage";
 import { ProtectedRoute } from "./routes/ProtectedRoute";
 
@@ -21,20 +23,19 @@ export default function App() {
 
       <Route element={<ProtectedRoute allowedRoles={["patient"]} />}>
         <Route element={<DashboardLayout />}>
-          <Route path="patient" element={<DashboardPage role="patient" />} />
+          <Route path="patient" element={<PatientDashboardPage />} />
         </Route>
       </Route>
       <Route element={<ProtectedRoute allowedRoles={["doctor"]} />}>
         <Route element={<DashboardLayout />}>
-          <Route path="doctor" element={<DashboardPage role="doctor" />} />
+          <Route path="doctor" element={<DoctorDashboardPage />} />
         </Route>
       </Route>
       <Route element={<ProtectedRoute allowedRoles={["admin"]} />}>
         <Route element={<DashboardLayout />}>
-          <Route path="admin" element={<DashboardPage role="admin" />} />
+          <Route path="admin" element={<AdminDashboardPage />} />
         </Route>
       </Route>
     </Routes>
   );
 }
-

@@ -1,6 +1,6 @@
 # CareLoop
 
-CareLoop is an AI-powered healthcare appointment and follow-up manager for patients, doctors, and administrators. This repository currently contains **Phase 1 only**: the project foundation and role-based authentication.
+CareLoop is an AI-powered healthcare appointment and follow-up manager for patients, doctors, and administrators. The repository currently contains Phase 1 authentication and **Phase 2A doctor profiles and scheduling foundations**.
 
 ## What Phase 1 includes
 
@@ -14,6 +14,19 @@ CareLoop is an AI-powered healthcare appointment and follow-up manager for patie
 - PostgreSQL-ready SQLAlchemy models and an initial Alembic migration
 - React authentication context, protected routing, and placeholder dashboards
 - Deterministic backend tests with no external calls
+
+## What Phase 2A includes
+
+- Atomic, administrator-controlled doctor account and profile provisioning
+- Doctor profile editing, activation, and booking-availability controls
+- Multiple non-overlapping working intervals per weekday
+- Administrator-managed full-day leave
+- Paginated patient discovery with case-insensitive specialisation search
+- Read-only doctor self-service profile, schedule, and leave views
+- Deterministic timezone-aware slot previews with past, leave, and inactive filtering
+- Functional role-specific frontend workflows for all three roles
+
+Slot output is a preview only. No appointment, hold, or booking record is created.
 
 ## Technology stack
 
@@ -33,7 +46,7 @@ careloop/
 │   │   ├── models/           # Database table mappings
 │   │   ├── repositories/     # Database queries and persistence
 │   │   ├── schemas/          # API validation and response shapes
-│   │   ├── services/         # Authentication business rules
+│   │   ├── services/         # Authentication, provisioning, and slot rules
 │   │   └── main.py           # FastAPI application assembly
 │   ├── tests/
 │   ├── .env.example
@@ -50,7 +63,9 @@ careloop/
 │   │   └── types/            # Shared TypeScript domain types
 │   ├── .env.example
 │   └── package.json
-└── docs/phase-1-foundation.md
+└── docs/
+    ├── phase-1-foundation.md
+    └── phase-2a-doctor-scheduling.md
 ```
 
 The additional `backend/app/cli` directory is intentional: it keeps privileged bootstrap operations separate from public HTTP routes.
@@ -91,7 +106,7 @@ The API runs at `http://localhost:8000`; interactive documentation is at `http:/
 ### Alembic commands
 
 ```bash
-# Apply every migration
+# Apply Phase 1 and Phase 2A migrations
 alembic upgrade head
 
 # Create a migration after changing models; inspect the file before applying it
@@ -116,7 +131,58 @@ source .venv/bin/activate
 python -m app.cli.create_admin
 ```
 
-The command refuses to overwrite an existing email and hashes the supplied password. The example `.env.example` values are placeholders, not test credentials. Doctor account provisioning is intentionally deferred until an administrator workflow is designed; for Phase 1, doctor authorization is covered directly by tests.
+The command refuses to overwrite an existing email and hashes the supplied password. The example `.env.example` values are placeholders, not test credentials.
+
+## Provision doctors
+
+Sign in as an administrator and use the Doctor Management screen, or send `POST /api/v1/admin/doctors` with the account and profile fields. The backend fixes the new user's role to `doctor`, normalizes the email, hashes the initial password, and creates both records in one transaction. If profile creation fails, the user insert is rolled back. There is no public doctor-registration endpoint.
+
+### Seed fictional demo doctors
+
+For local demonstrations, seed six fictional doctors covering Cardiology, Dermatology, General Medicine, Paediatrics, Neurology, and Orthopaedics:
+
+```bash
+cd backend
+source .venv/bin/activate
+read -s DEMO_DOCTOR_PASSWORD
+export DEMO_DOCTOR_PASSWORD
+python -m app.cli.seed_demo_data
+unset DEMO_DOCTOR_PASSWORD
+```
+
+Use a password that satisfies the normal rule: at least 10 characters with uppercase and lowercase letters and a number. The command never prints the password. It creates Monday–Saturday schedules in `Asia/Kolkata`, plus one future leave date per doctor.
+
+The seed is idempotent: an existing demo email is skipped, existing records are never deleted, and the final output reports created and skipped counts. It refuses to run when either `ENVIRONMENT=production` or CareLoop's configured environment is production. The six demo login emails end in `.demo@example.com` and are defined in `app/cli/seed_demo_data.py`; they all use the password supplied at execution time.
+
+## Phase 2A endpoints
+
+```text
+POST   /api/v1/admin/doctors
+GET    /api/v1/admin/doctors
+GET    /api/v1/admin/doctors/{doctor_id}
+PATCH  /api/v1/admin/doctors/{doctor_id}
+POST   /api/v1/admin/doctors/{doctor_id}/working-hours
+PATCH  /api/v1/admin/doctors/{doctor_id}/working-hours/{working_hour_id}
+DELETE /api/v1/admin/doctors/{doctor_id}/working-hours/{working_hour_id}
+POST   /api/v1/admin/doctors/{doctor_id}/leave
+DELETE /api/v1/admin/doctors/{doctor_id}/leave/{leave_id}
+
+GET    /api/v1/doctors
+GET    /api/v1/doctors/{doctor_id}
+GET    /api/v1/doctors/{doctor_id}/slots?date=YYYY-MM-DD
+
+GET    /api/v1/doctor/me/profile
+GET    /api/v1/doctor/me/schedule
+GET    /api/v1/doctor/me/leave
+```
+
+Admin routes require the admin role, discovery routes require the patient role, and `/doctor/me` routes derive the profile from the authenticated doctor rather than accepting another doctor's ID.
+
+## Slot preview behavior
+
+The service finds the requested weekday's intervals in the doctor's IANA timezone and divides each interval by the configured duration. It drops partial final slots, already-started slots, duplicates, leave dates, and all slots for inactive or unavailable doctors. Results are chronological, timezone-aware ISO-8601 timestamps.
+
+Generated slots are not guarantees. Phase 2B must atomically exclude appointments and active holds when booking.
 
 ## Run the frontend
 
@@ -141,7 +207,7 @@ Production cookies are marked `Secure`. A deployment with frontend and API on un
 
 Backend settings use the `CARELOOP_` prefix and are documented in `backend/.env.example`. Frontend variables use Vite's `VITE_` prefix and are documented in `frontend/.env.example`. Never commit `.env` files.
 
-Development has explicit local fallbacks. When `CARELOOP_ENVIRONMENT=production`, startup rejects the fallback database URL and an absent, short, or development JWT secret. No API key or external-service setting exists in Phase 1.
+Development has explicit local fallbacks. When `CARELOOP_ENVIRONMENT=production`, startup rejects the fallback database URL and an absent, short, or development JWT secret. No API key or external-service setting exists through Phase 2A.
 
 ## Tests and checks
 
@@ -159,22 +225,21 @@ Tests use an in-memory SQLite engine to isolate business and HTTP behavior. Post
 
 ## Current limitations
 
-- No appointment, doctor-profile, availability, or leave-management behavior yet
+- No appointment booking, availability holds, or appointment conflict checks yet
 - No LLM summaries, failure handling, patient-history retrieval, or RAG yet
 - No reminders, workers, Redis, email provider, retry queue, or Google Calendar OAuth yet
-- No password reset, email verification, refresh-token revocation store, or admin UI
-- Placeholder dashboards have no clinical or operational data
+- No password reset, email verification, or refresh-token revocation store
+- Working-hour overlap is service-enforced; exact duplicates and invalid ranges are also database-constrained
+- Slot previews do not account for daylight-saving ambiguities beyond Python's IANA timezone conversion
 - The health endpoint verifies connectivity, not deeper database readiness
 
-## Roadmap after Phase 1 review
+## Roadmap after Phase 2A review
 
-1. Doctor profiles, availability, and administrator-led doctor provisioning
-2. Transactional, conflict-safe appointment booking and doctor leave conflict handling
-3. LLM pre-visit summaries with graceful fallback and a small patient-history RAG step
-4. Post-visit summaries stored in the database
-5. Background medication reminders, durable retries, and SendGrid-compatible email delivery
-6. Google Calendar OAuth 2.0 and appointment synchronization
-7. Security hardening, observability, integration tests, and deployment preparation
+1. Transactional, conflict-safe appointment booking, short-lived slot holds, cancellation, and doctor-leave conflict handling
+2. LLM pre-visit summaries with graceful fallback and a small patient-history RAG step
+3. Post-visit summaries stored in the database
+4. Background medication reminders, durable retries, and SendGrid-compatible email delivery
+5. Google Calendar OAuth 2.0 and appointment synchronization
+6. Security hardening, observability, integration tests, and deployment preparation
 
-The next phase should begin only after the foundation and authentication design have been reviewed.
-
+Appointment booking is the next phase and should begin only after Phase 2A has been reviewed.

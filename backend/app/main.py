@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import auth, health
+from app.api.routes import admin_doctors, auth, doctor_self, doctors, health
 from app.core.config import settings
 
 app = FastAPI(title=settings.app_name, version="0.1.0")
@@ -15,4 +15,6 @@ app.add_middleware(
 
 app.include_router(health.router, prefix=settings.api_prefix)
 app.include_router(auth.router, prefix=settings.api_prefix)
-
+app.include_router(admin_doctors.router, prefix=settings.api_prefix)
+app.include_router(doctors.router, prefix=settings.api_prefix)
+app.include_router(doctor_self.router, prefix=settings.api_prefix)
