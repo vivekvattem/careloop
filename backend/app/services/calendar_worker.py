@@ -118,7 +118,9 @@ def run_once(worker_id=None, session_factory=SessionLocal, provider=None):
         # Development databases may not yet have the opt-in Phase 6 migration.
         return {"claimed":0,"created":0,"updated":0,"deleted":0,"retried":0,"failed":0}
     counts={"claimed":len(jobs),"created":0,"updated":0,"deleted":0,"retried":0,"failed":0}
+    operation_counts = {"create": "created", "update": "updated", "delete": "deleted"}
     for job in jobs:
         result=process_calendar_job(job.id, provider=provider, session_factory=session_factory)
-        if result in counts: counts[result]+=1
+        counter = operation_counts.get(result, result)
+        if counter in counts: counts[counter] += 1
     return counts

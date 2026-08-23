@@ -142,6 +142,32 @@ def test_delete_without_mapping_is_idempotent():
     assert calendar_worker.process_calendar_job(job_id,fake,now=now,session_factory=TestingSessionLocal)=="delete"; assert fake.deleted == []
 
 
+class _WorkerSession:
+    def __enter__(self): return self
+    def __exit__(self, *args): return False
+
+
+def test_run_once_empty_batch_keeps_all_counts_zero(monkeypatch):
+    monkeypatch.setattr(calendar_worker, "claim_calendar_jobs", lambda db, worker_id: [])
+    counts = calendar_worker.run_once(session_factory=_WorkerSession)
+    assert counts == {"claimed": 0, "created": 0, "updated": 0, "deleted": 0, "retried": 0, "failed": 0}
+
+
+def test_run_once_counts_successful_create_update_delete(monkeypatch):
+    jobs = [type("Job", (), {"id": "create"})(), type("Job", (), {"id": "update"})(), type("Job", (), {"id": "delete"})()]
+    monkeypatch.setattr(calendar_worker, "claim_calendar_jobs", lambda db, worker_id: jobs)
+    monkeypatch.setattr(calendar_worker, "process_calendar_job", lambda job_id, **kwargs: job_id)
+    assert calendar_worker.run_once(session_factory=_WorkerSession) == {"claimed": 3, "created": 1, "updated": 1, "deleted": 1, "retried": 0, "failed": 0}
+
+
+def test_run_once_counts_mixed_success_retry_and_failure(monkeypatch):
+    results = iter(["create", "delete", "retried", "failed"])
+    jobs = [type("Job", (), {"id": str(index)})() for index in range(4)]
+    monkeypatch.setattr(calendar_worker, "claim_calendar_jobs", lambda db, worker_id: jobs)
+    monkeypatch.setattr(calendar_worker, "process_calendar_job", lambda job_id, **kwargs: next(results))
+    assert calendar_worker.run_once(session_factory=_WorkerSession) == {"claimed": 4, "created": 1, "updated": 0, "deleted": 1, "retried": 1, "failed": 1}
+
+
 @pytest.mark.postgresql
 def test_postgresql_competing_claims_process_once(pg_sessions):
     now=datetime(2026,8,24,8,tzinfo=timezone.utc); factory=pg_sessions
