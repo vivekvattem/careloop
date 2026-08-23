@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     notification_base_retry_seconds: int = Field(default=60, ge=1, le=86400)
     notification_poll_seconds: int = Field(default=5, ge=1, le=300)
     notification_stale_claim_seconds: int = Field(default=300, ge=1, le=3600)
+    google_client_id: str = ""; google_client_secret: str = ""; google_redirect_uri: str = "http://localhost:8000/api/v1/integrations/google-calendar/callback"; google_token_encryption_key: str = ""; google_calendar_scopes: str = "https://www.googleapis.com/auth/calendar.events"
 
     model_config = SettingsConfigDict(
         env_file=".env",

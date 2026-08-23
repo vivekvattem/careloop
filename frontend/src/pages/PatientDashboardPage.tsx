@@ -36,6 +36,8 @@ export function PatientDashboardPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [calendar, setCalendar] = useState<{ status: "connected" | "reauthorization_required" | "disconnected"; calendar_id: string | null } | null>(null);
+  const [calendarBusy, setCalendarBusy] = useState(false);
 
   const loadAppointments = async () => {
     if (!accessToken) return;
@@ -61,6 +63,24 @@ export function PatientDashboardPage() {
       .catch(() => setError("Could not load your dashboard."))
       .finally(() => setLoading(false));
   }, [accessToken]);
+
+  useEffect(() => { if (!accessToken) return; api.calendarStatus(accessToken).then(setCalendar).catch(() => setCalendar(null)); }, [accessToken]);
+
+  useEffect(() => {
+    const result = new URLSearchParams(window.location.search).get("calendar");
+    if (!result) return;
+    if (result === "connected") {
+      setNotice("Google Calendar connected. Future appointment changes will be queued for synchronization.");
+      if (accessToken) api.calendarStatus(accessToken).then(setCalendar).catch(() => setCalendar(null));
+    } else if (result === "failed") {
+      setError("Google Calendar authorization was not completed. Your appointments are unaffected.");
+    }
+    window.history.replaceState({}, "", window.location.pathname);
+  }, [accessToken]);
+
+  const connectCalendar = async () => { if (!accessToken) return; setCalendarBusy(true); try { const result = await api.connectCalendar(accessToken); window.location.assign(result.authorization_url); } catch { setError("Google Calendar could not be started. Your appointments are unaffected."); setCalendarBusy(false); } };
+  const disconnectCalendar = async () => { if (!accessToken || !window.confirm("Disconnect Google Calendar? Pending Calendar sync jobs will be cancelled.")) return; setCalendarBusy(true); try { await api.disconnectCalendar(accessToken); setCalendar(await api.calendarStatus(accessToken)); setNotice("Google Calendar disconnected."); } catch { setError("Google Calendar could not be disconnected."); } finally { setCalendarBusy(false); } };
+  const syncCalendar = async (appointmentId: string) => { if (!accessToken) return; try { await api.syncCalendarAppointment(accessToken, appointmentId); setNotice("Calendar synchronization queued. Appointments remain confirmed if synchronization fails."); } catch (caught) { setError(caught instanceof ApiError ? caught.message : "Calendar sync could not be queued."); } };
 
   useEffect(() => {
     if (!hold) return;
@@ -156,8 +176,9 @@ export function PatientDashboardPage() {
       {loading && <p className="rounded-xl bg-slate-100 p-3 text-sm text-slate-600">Loading your doctors and appointments…</p>}
       {error && <p className="rounded-xl bg-red-50 p-3 text-sm text-red-700" role="alert">{error}</p>}
       {notice && <p className="rounded-xl bg-care-50 p-3 text-sm text-care-800">{notice}</p>}
+      <section className="rounded-2xl border bg-white p-5"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-xl font-semibold">Google Calendar</h2><p className="mt-1 text-sm text-slate-600">{calendarBusy ? "Connecting…" : calendar ? calendar.status.replaceAll("_", " ") : "Loading Calendar status…"}. Appointments remain confirmed even if Calendar synchronization fails.</p>{calendar?.calendar_id && <p className="mt-1 text-xs text-slate-500">Calendar: {calendar.calendar_id}</p>}</div>{calendar?.status === "connected" ? <button className="rounded-lg border px-4 py-2 text-sm" disabled={calendarBusy} onClick={disconnectCalendar}>{calendarBusy ? "Disconnecting…" : "Disconnect"}</button> : <button className={buttonClass} disabled={calendarBusy || !calendar} onClick={connectCalendar}>{calendarBusy ? "Connecting…" : calendar?.status === "reauthorization_required" ? "Reconnect Google Calendar" : "Connect Google Calendar"}</button>}</div></section>
 
-      <section><h2 className="text-2xl font-semibold">My appointments</h2><div className="mt-4 grid gap-4 lg:grid-cols-2"><AppointmentGroup title="Upcoming" items={upcoming} onCancel={cancel} onSummary={loadVisitIntelligence} onReschedule={(id) => { setReschedulingId(id); setNotice("Choose and hold a replacement slot below."); window.scrollTo({ top: 500, behavior: "smooth" }); }} /><AppointmentGroup title="Past and cancelled" items={past} onSummary={loadVisitIntelligence} /></div></section>
+      <section><h2 className="text-2xl font-semibold">My appointments</h2><div className="mt-4 grid gap-4 lg:grid-cols-2"><AppointmentGroup title="Upcoming" items={upcoming} onCancel={cancel} onSummary={loadVisitIntelligence} onCalendarSync={calendar?.status === "connected" ? syncCalendar : undefined} onReschedule={(id) => { setReschedulingId(id); setNotice("Choose and hold a replacement slot below."); window.scrollTo({ top: 500, behavior: "smooth" }); }} /><AppointmentGroup title="Past and cancelled" items={past} onSummary={loadVisitIntelligence} onCalendarSync={calendar?.status === "connected" ? syncCalendar : undefined} /></div></section>
 
       {preVisit && <section className="rounded-2xl border border-care-200 bg-white p-6"><div className="flex flex-wrap items-center justify-between gap-3"><h2 className="text-xl font-semibold">Pre-visit Care Packet</h2><div className="flex gap-2"><StatusBadge status={preVisit.status} />{preVisit.urgency && <span className="rounded-full bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-900">{preVisit.urgency} urgency</span>}</div></div>{preVisit.generation_source === "deterministic_fallback" && <p className="mt-3 rounded-lg bg-slate-50 p-3 text-sm text-slate-600">A reliable standard summary is shown because AI generation was unavailable.</p>}<h3 className="mt-4 font-medium">{preVisit.chief_complaint}</h3><ol className="mt-3 list-decimal space-y-2 pl-5 text-sm">{preVisit.suggested_questions?.map((question) => <li key={question}>{question}</li>)}</ol>{preVisit.safety_disclaimer && <p className="mt-4 text-xs text-slate-500">{preVisit.safety_disclaimer}</p>}
       {postVisit ? postVisit.availability === "approved" && postVisit.approved_content ? <div className="mt-6 border-t pt-5"><h2 className="text-xl font-semibold">Post-visit summary</h2><p className="mt-3">{postVisit.approved_content.patient_friendly_summary}</p><h3 className="mt-4 font-medium">Medication schedule</h3><MedicationScheduleCards items={postVisit.approved_content.medication_schedule} /><h3 className="mt-4 font-medium">Follow-up steps</h3><ul className="list-disc pl-5 text-sm">{postVisit.approved_content.follow_up_steps.map((step) => <li key={step}>{step}</li>)}</ul>{postVisit.approved_content.safety_disclaimer && <p className="mt-4 text-xs text-slate-500">{postVisit.approved_content.safety_disclaimer}</p>}</div> : <p className="mt-6 rounded-lg bg-amber-50 p-3 text-sm text-amber-800">Post-visit summary awaiting doctor review.</p> : null}</section>}
@@ -170,8 +191,8 @@ export function PatientDashboardPage() {
   );
 }
 
-function AppointmentGroup({ title, items, onCancel, onReschedule, onSummary }: { title: string; items: AppointmentListItem[]; onCancel?: (id: string) => void; onReschedule?: (id: string) => void; onSummary?: (id: string) => void }) {
-  return <div className="rounded-2xl border border-slate-200 bg-white p-5"><h3 className="font-semibold">{title}</h3><div className="mt-3 space-y-3">{items.map((item) => <div className="rounded-xl bg-slate-50 p-3 text-sm" key={item.id}><div className="flex justify-between gap-2"><span className="font-medium">{item.doctor_name}</span><StatusBadge status={item.status} /></div><p className="mt-1 text-slate-500">{new Date(item.slot_start).toLocaleString()}</p><div className="mt-2 flex flex-wrap gap-3">{onSummary && <button className="text-care-700" onClick={() => onSummary(item.id)}>Visit summaries</button>}{onCancel && item.status !== "cancelled" && <><button className="text-red-600" onClick={() => onCancel(item.id)}>Cancel</button><button className="text-care-700" onClick={() => onReschedule?.(item.id)}>Reschedule</button></>}</div></div>)}{!items.length && <p className="text-sm text-slate-500">Nothing here yet.</p>}</div></div>;
+function AppointmentGroup({ title, items, onCancel, onReschedule, onSummary, onCalendarSync }: { title: string; items: AppointmentListItem[]; onCancel?: (id: string) => void; onReschedule?: (id: string) => void; onSummary?: (id: string) => void; onCalendarSync?: (id: string) => void }) {
+  return <div className="rounded-2xl border border-slate-200 bg-white p-5"><h3 className="font-semibold">{title}</h3><div className="mt-3 space-y-3">{items.map((item) => <div className="rounded-xl bg-slate-50 p-3 text-sm" key={item.id}><div className="flex justify-between gap-2"><span className="font-medium">{item.doctor_name}</span><StatusBadge status={item.status} /></div><p className="mt-1 text-slate-500">{new Date(item.slot_start).toLocaleString()}</p><div className="mt-2 flex flex-wrap gap-3">{onSummary && <button className="text-care-700" onClick={() => onSummary(item.id)}>Visit summaries</button>}{onCalendarSync && <button className="text-care-700" onClick={() => onCalendarSync(item.id)}>Sync Calendar</button>}{onCancel && item.status !== "cancelled" && <><button className="text-red-600" onClick={() => onCancel(item.id)}>Cancel</button><button className="text-care-700" onClick={() => onReschedule?.(item.id)}>Reschedule</button></>}</div></div>)}{!items.length && <p className="text-sm text-slate-500">Nothing here yet.</p>}</div></div>;
 }
 
 export function StatusBadge({ status }: { status: string }) {

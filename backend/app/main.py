@@ -5,6 +5,7 @@ from app.api.routes import (
     admin_doctors,
     appointment_views,
     appointments,
+    calendar,
     auth,
     doctor_self,
     doctors,
@@ -35,3 +36,4 @@ app.include_router(visits.patient_router, prefix=settings.api_prefix)
 app.include_router(visits.doctor_router, prefix=settings.api_prefix)
 app.include_router(notifications.patient_router, prefix=settings.api_prefix)
 app.include_router(notifications.admin_router, prefix=settings.api_prefix)
+app.include_router(calendar.router, prefix=settings.api_prefix)

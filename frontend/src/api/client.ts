@@ -73,6 +73,10 @@ async function request<T>(
 }
 
 export const api = {
+  calendarStatus: (token: string) => request<{ status: "connected" | "reauthorization_required" | "disconnected"; calendar_id: string | null }>("/integrations/google-calendar/status", {}, token),
+  connectCalendar: (token: string) => request<{ authorization_url: string }>("/integrations/google-calendar/connect", { method: "POST" }, token),
+  disconnectCalendar: (token: string) => request<{ status: string }>("/integrations/google-calendar/disconnect", { method: "POST" }, token),
+  syncCalendarAppointment: (token: string, appointmentId: string) => request<{ job_id: string; status: string }>(`/integrations/google-calendar/sync/${appointmentId}`, { method: "POST" }, token),
   register: (input: RegisterInput) =>
     request<User>("/auth/register", { method: "POST", body: JSON.stringify(input) }),
   login: (input: LoginInput) =>

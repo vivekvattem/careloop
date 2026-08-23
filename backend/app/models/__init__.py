@@ -15,6 +15,15 @@ from app.models.visit import (
     Urgency,
 )
 from app.models.notification import MedicationReminderSchedule, NotificationEventType, NotificationOutbox, NotificationStatus
+from app.models.calendar import (
+    AppointmentCalendarMapping,
+    CalendarConnectionStatus,
+    CalendarOperation,
+    CalendarSyncJob,
+    CalendarSyncStatus,
+    GoogleCalendarConnection,
+    GoogleOAuthState,
+)
 
 __all__ = [
     "Appointment",
@@ -44,6 +53,13 @@ __all__ = [
     "NotificationEventType",
     "NotificationOutbox",
     "NotificationStatus",
+    "AppointmentCalendarMapping",
+    "CalendarConnectionStatus",
+    "CalendarOperation",
+    "CalendarSyncJob",
+    "CalendarSyncStatus",
+    "GoogleCalendarConnection",
+    "GoogleOAuthState",
 ]
 from app.models.appointment import (
     Appointment,

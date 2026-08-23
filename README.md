@@ -2,6 +2,15 @@
 
 CareLoop is an AI-powered healthcare appointment and follow-up manager for patients, doctors, and administrators. The repository contains Phase 1 authentication, Phase 2A scheduling, Phase 2B concurrency-safe booking, and **Phase 3 visit intelligence with controlled patient-history RAG**.
 
+## Phase 6 Google Calendar
+
+Phase 6 adds an optional patient-owned Google Calendar authorization-code integration with encrypted token storage, minimal event payloads, durable idempotent synchronization jobs, and a patient dashboard connection section. Calendar work never determines whether a CareLoop appointment is confirmed. See [Phase 6 documentation](docs/phase-6-google-calendar.md) for local Google Cloud setup, security behavior, worker commands, testing, and the manual integration procedure.
+
+```bash
+cd backend
+python -m app.cli.run_calendar_worker --once
+```
+
 ## Phase 5 notifications
 
 Phase 5 adds a durable database outbox and medication reminder worker. In development, run `python -m app.cli.run_notification_worker --once`; the default log provider performs no network delivery. See `docs/phase-5-notifications-and-reminders.md` for retry, idempotency, and optional provider configuration.

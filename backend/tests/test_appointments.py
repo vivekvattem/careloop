@@ -15,6 +15,10 @@ from app.models.appointment import (
 )
 from app.models.doctor import DoctorLeave
 from app.models.user import UserRole
+from app.models.calendar import CalendarSyncJob, CalendarSyncStatus, GoogleCalendarConnection, CalendarConnectionStatus
+from app.services.calendar import encrypt
+from app.core.config import settings
+from cryptography.fernet import Fernet
 from app.schemas.appointment import SymptomInput
 from app.services.appointment import AppointmentService, HoldConflictError
 from tests.conftest import TestingSessionLocal
@@ -65,6 +69,56 @@ def book_appointment(client: TestClient, patient_token: str, doctor_id, start: d
     booked = confirm(client, patient_token, held.json()["hold_token"])
     assert booked.status_code == 201
     return booked
+
+
+@pytest.fixture
+def calendar_key(monkeypatch):
+    monkeypatch.setattr(settings, "google_token_encryption_key", Fernet.generate_key().decode())
+
+
+def test_calendar_lifecycle_jobs_are_transactional_and_keep_email_events(client: TestClient, calendar_key) -> None:
+    patient, token = create_user(UserRole.PATIENT, "calendar.patient@example.com")
+    doctor_id, _, start = prepare_slot(email="calendar.doctor@example.com")
+    with TestingSessionLocal() as db:
+        db.add(GoogleCalendarConnection(user_id=patient.id, access_token_encrypted=encrypt("access"), refresh_token_encrypted=encrypt("refresh"), scopes="calendar.events", calendar_id="primary", status=CalendarConnectionStatus.CONNECTED)); db.commit()
+    booked = book_appointment(client, token, doctor_id, start); appointment_id = booked.json()["id"]
+    with TestingSessionLocal() as db:
+        jobs=db.scalars(select(CalendarSyncJob).where(CalendarSyncJob.appointment_id==UUID(appointment_id))).all()
+        assert len(jobs)==1 and jobs[0].operation.value=="create"
+    cancelled=client.post(f"/api/v1/appointments/{appointment_id}/cancel",json={"reason":"test"},headers=auth(token)); assert cancelled.status_code==200
+    with TestingSessionLocal() as db:
+        jobs=db.scalars(select(CalendarSyncJob).where(CalendarSyncJob.appointment_id==UUID(appointment_id))).all()
+        assert {job.operation.value for job in jobs}=={"create","delete"}
+
+
+def test_calendar_reschedule_enqueues_delete_for_original_and_create_for_replacement(client: TestClient, calendar_key) -> None:
+    patient, token=create_user(UserRole.PATIENT,"calendar.reschedule@example.com"); doctor_id, _, start=prepare_slot(email="calendar.reschedule.doctor@example.com")
+    with TestingSessionLocal() as db:
+        db.add(GoogleCalendarConnection(user_id=patient.id,access_token_encrypted=encrypt("access"),refresh_token_encrypted=encrypt("refresh"),scopes="calendar.events",calendar_id="primary",status=CalendarConnectionStatus.CONNECTED));db.commit()
+    original=book_appointment(client,token,doctor_id,start).json()["id"]
+    hold=create_hold(client,token,doctor_id,start+timedelta(minutes=30)); assert hold.status_code==201
+    response=client.post(f"/api/v1/appointments/{original}/reschedule",json={"new_hold_token":hold.json()["hold_token"]},headers=auth(token)); assert response.status_code==200
+    replacement=response.json()["id"]
+    with TestingSessionLocal() as db:
+        old=[j.operation.value for j in db.scalars(select(CalendarSyncJob).where(CalendarSyncJob.appointment_id==UUID(original))).all()]
+        new=[j.operation.value for j in db.scalars(select(CalendarSyncJob).where(CalendarSyncJob.appointment_id==UUID(replacement))).all()]
+        assert "delete" in old and new==["create"]
+
+
+def test_calendar_manual_sync_is_patient_owned_hidden_and_idempotent(client: TestClient, calendar_key) -> None:
+    patient, token = create_user(UserRole.PATIENT, "calendar.sync.owner@example.com")
+    _, other_token = create_user(UserRole.PATIENT, "calendar.sync.other@example.com")
+    doctor_id, _, start = prepare_slot(email="calendar.sync.doctor@example.com")
+    with TestingSessionLocal() as db:
+        db.add(GoogleCalendarConnection(user_id=patient.id, access_token_encrypted=encrypt("access"), refresh_token_encrypted=encrypt("refresh"), scopes="calendar.events", calendar_id="primary", status=CalendarConnectionStatus.CONNECTED))
+        db.commit()
+    appointment_id = book_appointment(client, token, doctor_id, start).json()["id"]
+    assert client.post(f"/api/v1/integrations/google-calendar/sync/{appointment_id}", headers=auth(other_token)).status_code == 404
+    assert client.post(f"/api/v1/integrations/google-calendar/sync/{appointment_id}", headers=auth(token)).status_code == 200
+    assert client.post(f"/api/v1/integrations/google-calendar/sync/{appointment_id}", headers=auth(token)).status_code == 200
+    with TestingSessionLocal() as db:
+        jobs = db.scalars(select(CalendarSyncJob).where(CalendarSyncJob.appointment_id == UUID(appointment_id))).all()
+        assert len(jobs) == 1
 
 
 @pytest.mark.parametrize(

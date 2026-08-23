@@ -199,6 +199,9 @@ class AppointmentService:
             from app.models.notification import NotificationEventType
             from app.services.notifications import enqueue
             enqueue(self.db, event_type=NotificationEventType.APPOINTMENT_CONFIRMED, recipient=patient, appointment_id=appointment.id, idempotency_key=f"appointment-confirmed:{appointment.id}", payload={"message": "Your CareLoop appointment is confirmed."})
+            # Calendar delivery is durable work in this same domain transaction; it never calls Google here.
+            from app.services.calendar import enqueue_sync
+            enqueue_sync(self.db, appointment, patient.id)
             self.appointments.create_history(
                 appointment,
                 previous_status=None,
@@ -235,6 +238,8 @@ class AppointmentService:
         from app.models.notification import NotificationEventType
         from app.services.notifications import enqueue
         enqueue(self.db, event_type=NotificationEventType.APPOINTMENT_CANCELLED, recipient=appointment.patient, appointment_id=appointment.id, idempotency_key=f"appointment-cancelled:{appointment.id}", payload={"message": "Your CareLoop appointment was cancelled."})
+        from app.services.calendar import enqueue_sync
+        enqueue_sync(self.db, appointment, appointment.patient_user_id)
         self.appointments.create_history(
             appointment,
             previous_status=previous,
@@ -327,6 +332,11 @@ class AppointmentService:
                 actor_user_id=patient.id,
                 reason="Created by rescheduling",
             )
+            # Rescheduling creates a replacement row. Delete/create avoids transferring a Google mapping
+            # across appointment identities and remains idempotent for adjacent reschedules.
+            from app.services.calendar import enqueue_sync
+            enqueue_sync(self.db, original, patient.id)
+            enqueue_sync(self.db, replacement, patient.id)
             hold.status = HoldStatus.CONSUMED
             self.db.commit()
         except IntegrityError as exc:
