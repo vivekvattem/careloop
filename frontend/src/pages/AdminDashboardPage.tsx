@@ -5,8 +5,8 @@ import { useAuth } from "../contexts/AuthContext";
 import type { AppointmentListItem } from "../types/appointment";
 import type { DoctorAdmin, DoctorProvisionInput, WorkingHourInput } from "../types/doctor";
 
-const inputClass = "w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm";
-const buttonClass = "rounded-lg bg-care-600 px-4 py-2 text-sm font-semibold text-white hover:bg-care-700 disabled:opacity-50";
+const inputClass = "ui-input";
+const buttonClass = "ui-button-primary";
 const weekdays = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
 const emptyDoctor: DoctorProvisionInput = {
@@ -84,12 +84,12 @@ export function AdminDashboardPage() {
   };
 
   return (
-    <section>
-      <div className="flex flex-wrap items-end justify-between gap-4">
+    <section className="space-y-8">
+      <div className="flex flex-wrap items-end justify-between gap-4 rounded-3xl bg-gradient-to-br from-care-900 to-ink p-7 text-white shadow-lift">
         <div>
-          <p className="text-sm font-semibold uppercase tracking-wider text-care-600">Administration</p>
-          <h1 className="mt-1 text-3xl font-bold">Doctor management</h1>
-          <p className="mt-2 text-slate-600">Provision accounts, profiles, schedules, and full-day leave.</p>
+          <p className="text-sm font-semibold uppercase tracking-wider text-care-100">Administration</p>
+          <h1 className="mt-1 text-3xl font-bold text-white">Doctor management</h1>
+          <p className="mt-2 text-slate-200">Provision accounts, profiles, schedules, and full-day leave.</p>
         </div>
         <button className={buttonClass} type="button" onClick={() => setShowCreate((value) => !value)}>
           {showCreate ? "Close form" : "Create doctor"}

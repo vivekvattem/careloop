@@ -8,8 +8,8 @@ import { StatusBadge } from "./PatientDashboardPage";
 import { MedicationScheduleCards } from "../components/MedicationScheduleCards";
 
 const weekdays = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
-const inputClass = "w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm";
-const buttonClass = "rounded-lg bg-care-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50";
+const inputClass = "ui-input";
+const buttonClass = "ui-button-primary";
 const emptyMedication = (): PrescriptionItemInput => ({ medication_name: "", dosage: "", route: null, frequency_per_day: 1, reminder_times: [], start_date: new Date().toISOString().slice(0, 10), end_date: null, food_instructions: null, additional_instructions: null, is_active: true });
 const emptyVisit = (): CompleteVisitInput => ({ clinical_note: { original_notes: "", diagnosis: null, treatment_plan: null, follow_up_instructions: "", recommended_follow_up_date: null, private_doctor_notes: null }, prescription: { general_instructions: null, items: [] } });
 

@@ -4,12 +4,30 @@
 
 @layer base {
   body {
-    @apply m-0 min-w-80 bg-slate-50 font-sans text-slate-900 antialiased;
+    @apply m-0 min-w-80 bg-mist font-sans text-ink antialiased;
   }
 
   button,
-  input {
+  input,
+  textarea,
+  select {
     @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-care-500 focus-visible:ring-offset-2;
   }
+
+  h1, h2, h3 { @apply tracking-tight text-ink; }
 }
 
+@layer components {
+  .ui-card { @apply rounded-2xl border border-slate-200/90 bg-white shadow-card; }
+  .ui-card-muted { @apply rounded-2xl border border-slate-200 bg-slate-50/70; }
+  .ui-input { @apply w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-ink shadow-sm placeholder:text-slate-400 transition focus:border-care-600; }
+  .ui-button { @apply inline-flex min-h-10 items-center justify-center rounded-xl px-4 py-2.5 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-55; }
+  .ui-button-primary { @apply ui-button bg-care-600 text-white shadow-sm hover:bg-care-700 active:bg-care-900; }
+  .ui-button-secondary { @apply ui-button bg-care-50 text-care-900 hover:bg-care-100; }
+  .ui-button-outline { @apply ui-button border border-slate-300 bg-white text-slate-700 hover:border-care-300 hover:bg-care-50; }
+  .ui-button-ghost { @apply ui-button text-slate-600 hover:bg-slate-100; }
+  .ui-button-destructive { @apply ui-button bg-red-600 text-white hover:bg-red-700; }
+  .ui-alert-error { @apply rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-800; }
+  .ui-alert-success { @apply rounded-xl border border-care-100 bg-care-50 px-4 py-3 text-sm text-care-900; }
+  .ui-status { @apply inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold; }
+}

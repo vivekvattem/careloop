@@ -6,8 +6,8 @@ import type { AppointmentListItem, HoldResponse, PatientPostVisitSummary, PreVis
 import type { DoctorPublic, SlotPreview } from "../types/doctor";
 import { MedicationScheduleCards } from "../components/MedicationScheduleCards";
 
-const inputClass = "rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm";
-const buttonClass = "rounded-lg bg-care-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50";
+const inputClass = "ui-input";
+const buttonClass = "ui-button-primary";
 const emptySymptoms: SymptomInput = {
   chief_complaint: "",
   symptom_description: "",
@@ -172,10 +172,10 @@ export function PatientDashboardPage() {
 
   return (
     <section className="space-y-10">
-      <div><p className="text-sm font-semibold uppercase tracking-wider text-care-600">Patient workspace</p><h1 className="mt-1 text-3xl font-bold">Hello, {user?.full_name}</h1><p className="mt-2 text-slate-600">Preview, briefly hold, and confirm an appointment.</p></div>
-      {loading && <p className="rounded-xl bg-slate-100 p-3 text-sm text-slate-600">Loading your doctors and appointments…</p>}
-      {error && <p className="rounded-xl bg-red-50 p-3 text-sm text-red-700" role="alert">{error}</p>}
-      {notice && <p className="rounded-xl bg-care-50 p-3 text-sm text-care-800">{notice}</p>}
+      <div className="rounded-3xl bg-gradient-to-br from-care-900 via-care-800 to-ink p-7 text-white shadow-lift sm:p-9"><p className="text-sm font-semibold uppercase tracking-wider text-care-100">Patient workspace</p><h1 className="mt-2 text-3xl font-bold text-white sm:text-4xl">Hello, {user?.full_name}</h1><p className="mt-3 max-w-2xl text-slate-200">Manage appointments, prepare for visits, and keep approved follow-up guidance close at hand.</p></div>
+      {loading && <p className="ui-card-muted p-4 text-sm text-slate-600">Loading your doctors and appointments…</p>}
+      {error && <p className="ui-alert-error" role="alert">{error}</p>}
+      {notice && <p className="ui-alert-success">{notice}</p>}
       <section className="rounded-2xl border bg-white p-5"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-xl font-semibold">Google Calendar</h2><p className="mt-1 text-sm text-slate-600">{calendarBusy ? "Connecting…" : calendar ? calendar.status.replaceAll("_", " ") : "Loading Calendar status…"}. Appointments remain confirmed even if Calendar synchronization fails.</p>{calendar?.calendar_id && <p className="mt-1 text-xs text-slate-500">Calendar: {calendar.calendar_id}</p>}</div>{calendar?.status === "connected" ? <button className="rounded-lg border px-4 py-2 text-sm" disabled={calendarBusy} onClick={disconnectCalendar}>{calendarBusy ? "Disconnecting…" : "Disconnect"}</button> : <button className={buttonClass} disabled={calendarBusy || !calendar} onClick={connectCalendar}>{calendarBusy ? "Connecting…" : calendar?.status === "reauthorization_required" ? "Reconnect Google Calendar" : "Connect Google Calendar"}</button>}</div></section>
 
       <section><h2 className="text-2xl font-semibold">My appointments</h2><div className="mt-4 grid gap-4 lg:grid-cols-2"><AppointmentGroup title="Upcoming" items={upcoming} onCancel={cancel} onSummary={loadVisitIntelligence} onCalendarSync={calendar?.status === "connected" ? syncCalendar : undefined} onReschedule={(id) => { setReschedulingId(id); setNotice("Choose and hold a replacement slot below."); window.scrollTo({ top: 500, behavior: "smooth" }); }} /><AppointmentGroup title="Past and cancelled" items={past} onSummary={loadVisitIntelligence} onCalendarSync={calendar?.status === "connected" ? syncCalendar : undefined} /></div></section>
