@@ -11,9 +11,8 @@ export function SiteLayout() {
     <div className="min-h-screen bg-mist">
       <header className="border-b border-slate-200/80 bg-white/95 backdrop-blur">
         <nav className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-5 py-4">
-          <Link className="flex items-center gap-2 font-bold text-ink" to="/">
-            <span className="grid h-9 w-9 place-items-center rounded-xl bg-care-600 text-lg text-white shadow-sm">C</span>
-            CareLoop
+          <Link className="flex items-center" to="/" aria-label="CareLoop home">
+            <img className="h-9 w-auto" src="/careloop-logo.svg" alt="CareLoop" />
           </Link>
           <button className="ui-button-ghost md:hidden" aria-expanded={open} onClick={() => setOpen(!open)}>Menu</button><div className={`${open ? "flex" : "hidden"} w-full flex-col gap-2 text-sm font-medium md:flex md:w-auto md:flex-row md:items-center`}>
             {!user && <><a className="ui-button-ghost" href="/#how-it-works" onClick={() => setOpen(false)}>How it works</a><a className="ui-button-ghost" href="/#features" onClick={() => setOpen(false)}>Features</a><a className="ui-button-ghost" href="/#safety" onClick={() => setOpen(false)}>Safety</a></>}

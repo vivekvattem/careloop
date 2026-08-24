@@ -1,167 +1,143 @@
 # CareLoop
 
-CareLoop is an AI-assisted healthcare appointment and continuity-of-care platform that connects booking, visit preparation, clinician-reviewed summaries, reminders, and calendar synchronization.
+<img src="frontend/public/careloop-logo.svg" alt="CareLoop" width="212" />
 
-The core workflow remains usable when an LLM, email provider, or Calendar provider is unavailable: appointment state is persisted transactionally, provider work is queued, retries are bounded, and visit intelligence has a deterministic fallback.
+CareLoop is an AI-assisted healthcare appointment and visit-continuity platform for patients, doctors, and administrators.
+
+- Live application: [careloop-vivek-vattem.vercel.app](https://careloop-vivek-vattem.vercel.app/)
+- API documentation: [Swagger UI](https://careloop-demo-api.onrender.com/docs)
+- Repository validation: automated backend tests, mocked provider tests, PostgreSQL migration checks, and frontend production builds are included; see [Testing and Validation](#testing-and-validation).
 
 ## Problem
 
-Healthcare appointment systems often stop at booking. Patient symptoms, visit preparation, clinical instructions, medication schedules, and follow-up actions remain fragmented across forms, messages, and calendars.
+Appointment booking systems often stop at scheduling, leaving care context fragmented before and after visits. External AI, email, and Calendar providers can also fail; CareLoop keeps the core appointment workflow available when they do.
 
 ## Solution
 
-CareLoop brings those steps into role-specific patient, doctor, and administrator workspaces. It provides concurrency-safe appointment booking, pre-visit care packets, clinician-controlled post-visit summaries, medication reminders, email notifications, Google Calendar synchronization, and durable retry/fallback mechanisms. AI assists with summarization; it does not replace clinician judgment or approval.
+CareLoop combines role-based healthcare workflows, concurrency-safe booking, doctor schedules and leave management, pre-visit AI summaries with limited patient-history retrieval, clinician-reviewed post-visit summaries, durable email and medication-reminder jobs, Google Calendar OAuth synchronization, and deterministic fallbacks. AI assists clinicians; it does not replace clinical judgment.
+
+## Live Demo
+
+| Component | URL |
+| --- | --- |
+| Frontend | https://careloop-vivek-vattem.vercel.app/ |
+| Backend API | https://careloop-demo-api.onrender.com |
+| Swagger documentation | https://careloop-demo-api.onrender.com/docs |
+| Liveness | https://careloop-demo-api.onrender.com/api/v1/health/live |
+| Readiness | https://careloop-demo-api.onrender.com/api/v1/health/ready |
+
+This is a hiring-assessment demonstration. Free Render services may sleep during inactivity, so the first request after sleep can take longer. Core appointments remain stored in PostgreSQL if external integrations fail. Demo credentials are intentionally not published.
+
+## Key Features
+
+### Patient
+
+- Registration, authentication, and password reset.
+- Doctor discovery, timezone-aware slot previews, transactional holds, booking, cancellation, and rescheduling.
+- Symptom submission, approved visit summaries, prescriptions, reminder controls, and Google Calendar connection.
+
+### Doctor
+
+- Schedule and appointment views with pre-visit care packets.
+- Clinical records, prescriptions, visit completion, and post-visit summary review, regeneration, approval, and rejection.
+- Private notes remain excluded from patient responses and LLM payloads.
+
+### Administrator
+
+- Doctor provisioning, working-hour and leave management, leave-conflict handling, appointment oversight, and notification-status visibility.
 
 ## System Architecture
 
 ```mermaid
 flowchart TB
-    UI["React + TypeScript + Vite"]
-    API["FastAPI API"]
-    DB[("PostgreSQL")]
-    LLM["Groq / OpenAI-compatible LLM"]
-    NW["Notification Worker"]
-    CW["Calendar Worker"]
-    EMAIL["SMTP / Resend / SendGrid / log"]
-    GCAL["Google Calendar"]
-
-    UI --> API
-    API --> DB
-    API --> LLM
-    DB --> NW
-    DB --> CW
-    NW --> EMAIL
-    CW --> GCAL
+    Web["Vercel React frontend"] --> API["Render FastAPI demo service"]
+    subgraph Demo["Combined Render process"]
+        API --> App["API process"]
+        API --> NW["Notification worker"]
+        API --> CW["Calendar worker"]
+    end
+    App --> DB[("Render PostgreSQL")]
+    NW <--> DB
+    CW <--> DB
+    App --> LLM["Groq-compatible LLM"]
+    NW --> SMTP["Gmail SMTP"]
+    CW --> GCal["Google Calendar OAuth/API"]
 ```
 
-The API owns authorization and transactional domain changes. Workers claim durable jobs from PostgreSQL before contacting external providers, so provider outages do not hold application transactions open.
+API transactions write durable notification and Calendar jobs to PostgreSQL. Workers claim those jobs later, so provider outages do not keep booking transactions open.
 
-### Appointment and visit data flow
+## Core Data Flow
 
 ```mermaid
 flowchart TB
-    Patient["Patient"] --> Slots["Doctor slots"]
-    Slots --> Hold["Slot hold"]
-    Hold --> Confirm["AppointmentService.confirm"]
-    Confirm --> Appointment["Appointment + symptoms + status history"]
-    Confirm --> Outbox["Notification outbox"]
-    Confirm --> CalendarJobs["Calendar sync jobs"]
-    Appointment --> PreVisit["Pending pre-visit summary"]
-    PreVisit --> PreWorker["Background generation"]
-    PreWorker --> LLM["OpenAI-compatible LLM"]
-    PreWorker --> PreFallback["Deterministic fallback"]
-    Doctor["Doctor review / completion"] --> Clinical["Clinical note + prescription"]
-    Clinical --> PostVisit["Post-visit summary"]
-    PostVisit --> Review["Approve or reject"]
-    Review --> PatientView["Patient-approved view"]
+    Select["Patient selects doctor slot"] --> Hold["Time-limited database hold"]
+    Hold --> Validate["Transactional schedule, leave, and conflict revalidation"]
+    Validate --> Exclude["PostgreSQL exclusion constraint"]
+    Exclude --> Commit["Appointment and durable outbox/sync jobs commit"]
+    Commit --> Workers["Workers deliver email and Calendar changes independently"]
 ```
 
-Confirmation, cancellation, and rescheduling commit CareLoop state and enqueue notification/Calendar work transactionally. Email and Calendar provider calls happen later in workers, while LLM generation runs in a separate background task; a reschedule creates a linked replacement appointment rather than overwriting the original slot.
-
-### Verified Care History / RAG flow
+## AI and RAG Flow
 
 ```mermaid
 flowchart TB
-    Symptoms["Current appointment symptoms"] --> Query["History query text"]
-    Query --> Retriever["HistoryRetriever"]
-    Docs[("CareDocument records")] --> Retriever
-    Retriever --> Filters["Same patient · exclude current appointment\nverified clinical sources or symptoms"]
-    Filters --> Rank["PostgreSQL lexical ranking\n(or bounded SQLite term overlap)"]
-    Rank --> Sources["Up to 3 ranked source links"]
-    Sources --> Packet["Pre-visit care packet context"]
-    Symptoms --> Packet
-    Packet --> LLM2["OpenAI-compatible LLM"]
-    Packet --> Fallback["Deterministic fallback"]
-    LLM2 --> Summary["Stored pre-visit summary"]
-    Fallback --> Summary
+    Input["Symptoms and verified CareLoop history"] --> Retrieve["Limited retrieval and ranking"]
+    Retrieve --> Prompt["Versioned prompt"]
+    Prompt --> LLM["OpenAI-compatible LLM"]
+    LLM --> Validate["Pydantic validation and safety checks"]
+    Validate --> Store["Stored summary"]
+    LLM --> Fallback["Deterministic fallback on failure"]
+    Fallback --> Store
+    Store --> Review["Clinician review for post-visit content"]
 ```
 
-History retrieval is patient-scoped and bounded. PostgreSQL uses `to_tsvector`/`tsquery` lexical ranking; the implementation does not use a vector database, embeddings, or unrestricted medical-memory access. Retrieved source relationships are stored for inspection, and only appropriate approved/verified documents or the patient’s symptom document are eligible.
+RAG sources are verified, patient-scoped CareLoop history—not unrestricted medical web content. The implementation uses bounded lexical retrieval, not a vector database or embeddings.
 
-## Core capabilities
+## Reliability Decisions
 
-- Patient-only public registration and patient, doctor, and administrator authorization.
-- Administrator-controlled doctor profiles, working hours, leave, availability, and demo-data tooling.
-- Timezone-aware slot previews, short-lived holds, PostgreSQL overlap protection, confirmation, cancellation, and linked rescheduling.
-- Structured symptoms, clinician-owned clinical records, prescriptions, pre-visit intelligence, and clinician-reviewed post-visit summaries.
-- Patient-scoped history retrieval with stored source links and deterministic fallback when LLM generation is unavailable.
-- Durable notification outbox with medication reminders, idempotency, retries, log/fake providers, SMTP, Resend, and SendGrid support.
-- Optional patient-owned Google Calendar OAuth and durable create/update/delete synchronization.
-- Secure password reset with hashed, expiring, single-use tokens and authentication-version invalidation.
+| Concern | Protection |
+| --- | --- |
+| Double booking | PostgreSQL range exclusion constraints, doctor locks, transactional revalidation |
+| Slot competition | Short-lived database-backed holds with hashed tokens |
+| Doctor leave conflicts | Read-only preview followed by explicit confirmed transactional resolution |
+| LLM outage | Stored deterministic fallback; appointment workflow remains available |
+| Email failure | Transactional outbox, idempotency keys, retries, exponential backoff |
+| Calendar failure | Durable sync jobs; appointment status is independent of Google |
+| Token security | Hashed reset/hold tokens and encrypted Google OAuth tokens |
+| Authorization | Patient, doctor, and admin route-level enforcement |
 
-## Database Schema
+## Technology Stack
 
-PostgreSQL is the source of truth for identity, scheduling, visits, AI outputs and durable integration jobs. Alembic manages schema evolution.
+React, TypeScript, Vite, Tailwind CSS, FastAPI, Python, SQLAlchemy, Alembic, PostgreSQL, JWT, Argon2, Groq through an OpenAI-compatible interface, SMTP email, Google Calendar OAuth 2.0, pytest, Docker, Render, and Vercel.
 
-```mermaid
-erDiagram
-    USERS ||--o| DOCTOR_PROFILES : "may own"
-    USERS ||--o{ APPOINTMENTS : "books"
-    DOCTOR_PROFILES ||--o{ APPOINTMENTS : "receives"
-    DOCTOR_PROFILES ||--o{ DOCTOR_WORKING_HOURS : "defines"
-    DOCTOR_PROFILES ||--o{ DOCTOR_LEAVES : "takes"
-    APPOINTMENTS ||--o| SYMPTOM_SUBMISSIONS : "has"
-    APPOINTMENTS ||--o| PRE_VISIT_SUMMARIES : "generates"
-    APPOINTMENTS ||--o| CLINICAL_NOTES : "records"
-    APPOINTMENTS ||--o| PRESCRIPTIONS : "creates"
-    APPOINTMENTS ||--o| POST_VISIT_SUMMARIES : "generates"
-    PRESCRIPTIONS ||--o{ PRESCRIPTION_ITEMS : "contains"
-    PRESCRIPTION_ITEMS ||--o{ MEDICATION_REMINDER_SCHEDULES : "schedules"
-    APPOINTMENTS ||--o{ NOTIFICATION_OUTBOX : "enqueues"
-    APPOINTMENTS ||--o{ CALENDAR_SYNC_JOBS : "enqueues"
-    USERS ||--o| GOOGLE_CALENDAR_CONNECTIONS : "connects"
-    APPOINTMENTS ||--o{ APPOINTMENT_CALENDAR_MAPPINGS : "maps"
-    USERS ||--o{ PASSWORD_RESET_TOKENS : "requests"
-    CARE_DOCUMENTS }o--|| USERS : "belongs to"
-    CARE_DOCUMENTS }o--|| APPOINTMENTS : "references"
-    PRE_VISIT_SUMMARIES ||--o{ PRE_VISIT_SUMMARY_SOURCES : "cites"
-    CARE_DOCUMENTS ||--o{ PRE_VISIT_SUMMARY_SOURCES : "is cited"
-```
+## Local Setup
 
-The schema also records appointment status history, encrypted Calendar connection material, OAuth state hashes, and provider-safe failure metadata. Foreign keys and unique constraints enforce the one-to-one and idempotency rules described by the services.
-
-## Technology stack
-
-Backend: Python 3.12, FastAPI, Pydantic v2, SQLAlchemy 2, Alembic, PostgreSQL/psycopg, PyJWT, Argon2 via `pwdlib`, and Pytest.
-
-Frontend: React, TypeScript, Vite, React Router, and Tailwind CSS.
-
-## Quick start
-
-### 1. Create a local PostgreSQL database
-
-```sql
-CREATE USER careloop WITH PASSWORD 'careloop';
-CREATE DATABASE careloop OWNER careloop;
-```
-
-These credentials are for local development only.
-
-### 2. Install and configure the backend
+Prerequisites: Python 3.12, Node.js, npm, and PostgreSQL (or Docker for the local database).
 
 ```bash
+# Create a local database and install the backend
 cd backend
 python3.12 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -e '.[dev]'
 cp .env.example .env
-```
-
-Set a random `CARELOOP_JWT_SECRET` of at least 32 characters in the ignored `.env`, then apply the schema and start the API:
-
-```bash
 python -m alembic upgrade head
 uvicorn app.main:app --reload
 ```
 
-The API is available at `http://localhost:8000`; interactive documentation is at `/docs`. Liveness and database readiness are exposed at `/api/v1/health/live` and `/api/v1/health/ready`.
+Use a local PostgreSQL database matching `CARELOOP_DATABASE_URL` in the ignored `backend/.env`. Set a random `CARELOOP_JWT_SECRET` of at least 32 characters; never place real credentials in this README.
 
-### API documentation
+In separate terminals, run the durable workers:
 
-FastAPI generates the interactive Swagger UI at `http://localhost:8000/docs` and the OpenAPI JSON document at `http://localhost:8000/openapi.json`. The route groups are summarized below in [Selected API areas](#selected-api-areas); the generated OpenAPI document is the authoritative request and response contract.
+```bash
+cd backend
+source .venv/bin/activate
+python -m app.cli.run_notification_worker
+python -m app.cli.run_calendar_worker
+```
 
-### 3. Install and run the frontend
+Then run the frontend:
 
 ```bash
 cd frontend
@@ -169,141 +145,107 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:5173`. Set `VITE_API_URL` in the ignored frontend `.env` when the API is not at its default `http://localhost:8000/api/v1`.
+The local API is at `http://localhost:8000`, Swagger is at `http://localhost:8000/docs`, and the frontend is at `http://localhost:5173`.
 
-## Workers and operations
+## Environment Configuration
 
-Run workers continuously in deployed environments; use `--once` for a bounded local pass:
+[`backend/.env.example`](backend/.env.example) is the canonical backend reference; [`frontend/.env.example`](frontend/.env.example) documents Vite’s public values. Copy examples into ignored local `.env` files rather than inventing aliases.
 
-```bash
-cd backend
-source .venv/bin/activate
-python -m app.cli.run_notification_worker
-python -m app.cli.run_calendar_worker
-
-# One bounded pass
-python -m app.cli.run_notification_worker --once
-python -m app.cli.run_calendar_worker --once
-```
-
-Apply migrations once per release, before starting application replicas:
-
-```bash
-python -m alembic upgrade head
-python -m alembic current
-```
-
-The current migration head is `20260822_09`. Never point PostgreSQL concurrency tests at a development or production database; set an explicit dedicated `TEST_DATABASE_URL`.
-
-For local fictional doctors, use `python -m app.cli.seed_demo_data` with `DEMO_DOCTOR_PASSWORD`. The seed is development-only and idempotent. Resetting those six demo accounts uses `python -m app.cli.reset_demo_doctor_passwords`.
-
-## Selected API areas
-
-All routes are prefixed with `/api/v1`.
-
-| Area | Examples |
+| Group | Variables |
 | --- | --- |
-| Authentication | `/auth/register`, `/auth/login`, `/auth/refresh`, `/auth/logout`, `/auth/forgot-password`, `/auth/reset-password` |
-| Doctors and scheduling | `/doctors`, `/doctors/{id}/slots`, `/admin/doctors`, `/doctor/me/profile` |
-| Appointments | `/appointments/holds`, `/appointments`, `/appointments/me`, cancellation and rescheduling routes |
-| Visit intelligence | Patient summaries plus doctor review, regeneration, completion, clinical-record, prescription, approve, and reject routes |
-| Notifications | `/notifications`, `/admin/notifications` |
-| Google Calendar | `/integrations/google-calendar/status`, connect, callback, disconnect, and appointment sync routes |
-| Health | `/health/live`, `/health/ready`, and `/health` |
+| Application, database, security | `CARELOOP_ENVIRONMENT`, `CARELOOP_DATABASE_URL`, `CARELOOP_JWT_SECRET`, token/hold durations |
+| Frontend and CORS | `CARELOOP_FRONTEND_ORIGIN`, `CARELOOP_CORS_ORIGINS`, `CARELOOP_PUBLIC_API_URL`, `CARELOOP_COOKIE_SAMESITE`, `VITE_API_URL` |
+| LLM | `CARELOOP_LLM_ENABLED`, `CARELOOP_LLM_PROVIDER`, `CARELOOP_LLM_API_KEY`, `CARELOOP_LLM_BASE_URL`, `CARELOOP_LLM_MODEL`, `CARELOOP_LLM_TIMEOUT_SECONDS` |
+| SMTP and email | `CARELOOP_EMAIL_PROVIDER`, `CARELOOP_EMAIL_FROM_ADDRESS`, SMTP/Resend/SendGrid settings, `CARELOOP_EMAIL_TIMEOUT_SECONDS` |
+| Google Calendar | `CARELOOP_GOOGLE_CALENDAR_ENABLED`, client credentials, redirect URI, token-encryption key, and scopes |
+| Worker and retry | `CARELOOP_NOTIFICATION_POLL_SECONDS`, `CARELOOP_NOTIFICATION_MAX_ATTEMPTS`, `CARELOOP_NOTIFICATION_BASE_RETRY_SECONDS`, `CARELOOP_NOTIFICATION_STALE_CLAIM_SECONDS` |
 
-## Configuration and provider boundaries
+Backend secrets belong only in ignored local files or the deployment secret store. Never expose them through Vite variables.
 
-Backend variables use the `CARELOOP_` prefix and are documented in [backend/.env.example](backend/.env.example). Frontend variables use Vite's `VITE_` prefix and are documented in [frontend/.env.example](frontend/.env.example). Never commit `.env` files or place backend secrets in frontend variables.
+## API Documentation
 
-Copy the examples for local setup rather than inventing variable names:
+- Deployed: [Swagger UI](https://careloop-demo-api.onrender.com/docs)
+- Local: [http://localhost:8000/docs](http://localhost:8000/docs)
+- Route groups: authentication, doctors and scheduling, appointments, visit intelligence, notifications, Calendar integrations, and health.
 
-```bash
-cp backend/.env.example backend/.env
-cp frontend/.env.example frontend/.env
-```
+The generated OpenAPI document is the authoritative request and response contract.
 
-The example files contain placeholders and local development defaults only. Keep real API keys, OAuth credentials, SMTP credentials, encryption keys, and JWT secrets in the ignored local file or deployment secret store.
+## Database Schema
 
-The documented LLM example uses Groq's OpenAI-compatible endpoint:
+Alembic manages PostgreSQL schema evolution. The main domains are:
 
-```env
-CARELOOP_LLM_PROVIDER=openai_compatible
-CARELOOP_LLM_BASE_URL=https://api.groq.com/openai/v1
-CARELOOP_LLM_MODEL=openai/gpt-oss-20b
-```
+- Identity and authentication: users, password-reset tokens, and authorization state.
+- Doctor scheduling: profiles, working hours, and leave.
+- Appointments and holds: appointments, status history, symptoms, and short-lived slot holds.
+- Clinical records and summaries: notes, prescriptions/items, pre-visit summaries, post-visit summaries, and verified care documents.
+- Notifications and medication reminders: transactional outbox jobs and reminder schedules.
+- Google Calendar: encrypted connections, OAuth state, event mappings, and durable sync jobs.
 
-LLM responses use a strict JSON schema and are validated again with Pydantic. Authentication/model errors are not retried; rate limits, timeouts, and transient server errors have bounded retry behavior. Email and Calendar providers similarly use sanitized failure categories and never receive clinical data beyond their allowlisted payloads.
+See [Phase 2B booking and concurrency](docs/phase-2b-appointment-booking.md), [Phase 3 visit intelligence](docs/phase-3-ai-visit-intelligence.md), [Phase 5 notifications](docs/phase-5-notifications-and-reminders.md), and [Phase 6 Google Calendar](docs/phase-6-google-calendar.md) for detailed design notes.
 
-### LLM prompt contracts
+## LLM Prompts and Failure Handling
 
-The versioned prompt contracts are `pre_visit_v1` and `post_visit_v1`. Their system prompts, untrusted-data boundaries, required output behavior, and JSON-delimited user sections are defined in [`backend/app/services/prompts.py`](backend/app/services/prompts.py) and explained in [Phase 3 visit intelligence](docs/phase-3-ai-visit-intelligence.md). The pre-visit prompt receives current symptoms and bounded retrieved history; the post-visit prompt receives doctor-authored notes and the structured prescription. Neither prompt grants the model unrestricted access to patient records.
+Pre-visit intent: “Analyse these symptoms and return an urgency level, chief complaint, and three suggested questions for the doctor.”
 
-### Google Calendar setup
+Post-visit intent: “Convert clinician-approved notes into a patient-friendly summary with the stored medication schedule and follow-up steps.”
 
-Calendar synchronization is optional and patient-owned. Create a Google OAuth web application, register the exact local callback URL below, and enable the Calendar API:
+Actual versioned prompts are in [`backend/app/services/prompts.py`](backend/app/services/prompts.py). Results are validated and stored in PostgreSQL. Provider failures never block valid bookings or visit completion; deterministic summaries persist as fallback; medications cannot be invented or changed by the LLM.
 
-```text
-http://localhost:8000/api/v1/integrations/google-calendar/callback
-```
+## Google Calendar Setup
 
-Set these names in the ignored backend `.env` when Calendar is enabled:
+1. Enable the Google Calendar API and configure an OAuth consent screen.
+2. Create a Web OAuth client.
+3. Add the deployed callback URI: `https://careloop-demo-api.onrender.com/api/v1/integrations/google-calendar/callback`.
+4. Add the local development callback URI: `http://localhost:8000/api/v1/integrations/google-calendar/callback`.
+5. Store the client ID, client secret, encryption key, scope, and redirect URI only in environment secrets.
+6. Connect the Calendar from the patient dashboard.
 
-```env
-CARELOOP_GOOGLE_CALENDAR_ENABLED=true
-CARELOOP_GOOGLE_CLIENT_ID=
-CARELOOP_GOOGLE_CLIENT_SECRET=
-CARELOOP_GOOGLE_REDIRECT_URI=http://localhost:8000/api/v1/integrations/google-calendar/callback
-CARELOOP_GOOGLE_TOKEN_ENCRYPTION_KEY=
-CARELOOP_GOOGLE_CALENDAR_SCOPES=https://www.googleapis.com/auth/calendar.events
-```
+Bookings remain valid if Calendar synchronization fails.
 
-Generate a Fernet key for `CARELOOP_GOOGLE_TOKEN_ENCRYPTION_KEY`; do not commit it. The OAuth connect, callback, disconnect, status, and appointment-sync behavior is documented in [Phase 6 Google Calendar](docs/phase-6-google-calendar.md). Calendar event payloads are intentionally minimal and exclude symptoms, diagnoses, notes, prescriptions, summaries, and medical history.
+## Deployment
 
-## Hosted application
+The frontend runs on Vercel. Render hosts PostgreSQL and one free demo web service, which supervises the API, notification worker, and Calendar worker after migrations run. This combined free-tier topology is appropriate for assessment/demo use; production should deploy independent API and worker services. See the [deployment guide](docs/deployment.md).
 
-This repository does not define or verify a hosted application URL. The checked-in deployment blueprint is provider-compatible, but no deployment is claimed here. Use the local URLs above for evaluation, or record a deployed URL only after it has been independently verified. The deployment topology and environment matrix are in the [deployment guide](docs/deployment.md).
-
-## Tests
+## Testing and Validation
 
 ```bash
 cd backend
 source .venv/bin/activate
 pytest
-
-# PostgreSQL-only tests require a separate database
 TEST_DATABASE_URL='postgresql+psycopg://user:password@localhost:5432/careloop_test' pytest -m postgresql
+python -m alembic current
+python -m alembic check
 
-cd ../frontend
+cd ..
+docker build -f backend/Dockerfile -t careloop-backend .
+
+cd frontend
 npm run build
 ```
 
-Automated provider tests use fake providers or mocked HTTP transports. PostgreSQL fixtures create isolated schemas and refuse a URL that matches the development database.
+Provider tests use fake providers or mocked transports. PostgreSQL tests require an explicitly isolated database and reject the development database URL.
 
-## Documentation
-
-Detailed implementation and operational notes remain under [`docs/`](docs/):
-
-- [Deployment guide](docs/deployment.md) and [readiness audit](docs/deployment-readiness-audit.md)
-- [Phase 1 foundation](docs/phase-1-foundation.md)
-- [Phase 2A doctor scheduling](docs/phase-2a-doctor-scheduling.md)
-- [Phase 2B appointment booking and concurrency](docs/phase-2b-appointment-booking.md)
-- [Phase 3 visit intelligence](docs/phase-3-ai-visit-intelligence.md)
-- [Phase 4 post-visit intelligence](docs/phase-4-post-visit-intelligence.md)
-- [Phase 5 notifications and reminders](docs/phase-5-notifications-and-reminders.md)
-- [Phase 6 Google Calendar](docs/phase-6-google-calendar.md)
-
-For a system-design review, start with the architecture and data-flow diagrams above, then read the [deployment guide](docs/deployment.md), [readiness audit](docs/deployment-readiness-audit.md), and the phase documents for concurrency, visit-intelligence, notification, and Calendar trade-offs.
-
-## Project structure
+## Project Structure
 
 ```text
 careloop/
-├── backend/
-│   ├── app/{api,cli,core,db,models,repositories,schemas,services}/
-│   ├── alembic/versions/
-│   └── tests/
-├── frontend/src/{api,components,contexts,layouts,pages,routes,types}/
-└── docs/
+├── backend/app/
+├── backend/alembic/
+├── backend/tests/
+├── frontend/src/
+├── docs/
+├── render.yaml
+└── docker-compose.yml
 ```
 
-CareLoop is an assessment/demo application. Provider credentials, domain configuration, backups, monitoring, and deployment-specific security controls must be supplied and reviewed separately for any real environment.
+## Design Documentation
+
+- [Deployment guide](docs/deployment.md)
+- [Deployment readiness audit](docs/deployment-readiness-audit.md)
+- [Visit intelligence](docs/phase-3-ai-visit-intelligence.md)
+- [Notifications and reminders](docs/phase-5-notifications-and-reminders.md)
+- [Google Calendar](docs/phase-6-google-calendar.md)
+
+## Safety and Scope
+
+CareLoop is an assessment/demo application, not a medical diagnosis system. AI output is assistive and must not replace clinician judgment. Use only fictional data in demonstrations and do not upload real patient information.
