@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 import hashlib
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from app.core.security import create_access_token, create_refresh_token
 from app.models.notification import NotificationEventType, NotificationOutbox
@@ -74,3 +75,31 @@ def test_inactive_user_receives_same_response_without_job(client, db_session):
     response = client.post("/api/v1/auth/forgot-password", json={"email": "reset@example.com"})
     assert response.status_code == 202
     assert db_session.query(NotificationOutbox).count() == 0
+
+
+def test_token_hash_is_unique_and_lookup_is_supported(db_session, client):
+    _register(client)
+    user = db_session.query(User).filter_by(email="reset@example.com").one()
+    now = datetime.now(timezone.utc)
+    token_hash = hashlib.sha256(b"unique-token-hash-test").hexdigest()
+    db_session.add(
+        PasswordResetToken(
+            user_id=user.id,
+            token_hash=token_hash,
+            requested_at=now,
+            expires_at=now + timedelta(minutes=20),
+        )
+    )
+    db_session.commit()
+    assert db_session.query(PasswordResetToken).filter_by(token_hash=token_hash).one().user_id == user.id
+    db_session.add(
+        PasswordResetToken(
+            user_id=user.id,
+            token_hash=token_hash,
+            requested_at=now,
+            expires_at=now + timedelta(minutes=20),
+        )
+    )
+    with pytest.raises(IntegrityError):
+        db_session.commit()
+    db_session.rollback()
