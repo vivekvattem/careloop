@@ -13,7 +13,7 @@ python -m app.cli.run_calendar_worker --once
 
 ## Phase 5 notifications
 
-Phase 5 adds a durable database outbox and medication reminder worker. In development, run `python -m app.cli.run_notification_worker --once`; the default log provider performs no network delivery. See `docs/phase-5-notifications-and-reminders.md` for retry, idempotency, and optional provider configuration.
+Phase 5 adds a durable database outbox and medication reminder worker. In development, run `python -m app.cli.run_notification_worker --once`; the default `log` provider performs no network delivery. Production-capable SendGrid, Resend, and generic SMTP adapters use the same durable idempotency and retry flow. SMTP supports unauthenticated local Mailpit delivery or optional STARTTLS/authentication. See `docs/phase-5-notifications-and-reminders.md` for retry, idempotency, and provider configuration.
 
 ## What Phase 1 includes
 
@@ -359,6 +359,8 @@ Backend settings use the `CARELOOP_` prefix and are documented in `backend/.env.
 
 Development has explicit local fallbacks. When `CARELOOP_ENVIRONMENT=production`, startup rejects the fallback database URL and an absent, short, or development JWT secret. LLM configuration remains optional because deterministic fallback is part of normal operation.
 
+For container topology, production environment variables, migration sequencing, and worker deployment, see the [deployment guide](docs/deployment.md) and [deployment-readiness audit](docs/deployment-readiness-audit.md). The API, notification worker, and Calendar worker are separate production processes; deploying only the API leaves queued notification and Calendar work pending.
+
 ## Tests and checks
 
 ```bash
@@ -378,7 +380,7 @@ Fast business and HTTP tests use an in-memory SQLite engine. Marked PostgreSQL t
 - In-process summary generation is not durable across process termination
 - RAG uses lexical PostgreSQL search rather than embeddings or semantic vectors
 - Deterministic urgency uses submitted severity bands only and is not diagnostic
-- No reminders, durable workers, Redis, email provider, retry queue, or Google Calendar OAuth yet
+- Operational deployment still requires managed PostgreSQL, HTTPS domains, secret-store configuration, provider accounts, and a tested backup/rollback procedure
 - No password reset, email verification, or refresh-token revocation store
 - Working-hour overlap is service-enforced; exact duplicates and invalid ranges are also database-constrained
 - Hold expiration uses lazy cleanup; a future worker may remove old records for maintenance, not correctness
@@ -387,10 +389,6 @@ Fast business and HTTP tests use an in-memory SQLite engine. Marked PostgreSQL t
 
 ## Roadmap after Phase 3 review
 
-1. Transactional outbox and durable worker processing for pending summaries
-2. Medication reminder jobs derived directly from structured prescription times
-3. SendGrid-compatible delivery with retries and delivery history
-4. Google Calendar OAuth 2.0 and appointment synchronization
-5. Security hardening, observability, integration tests, and deployment preparation
-
-Email, reminder workers, and Calendar remain intentionally deferred until Phase 4.
+1. Operational monitoring, alerting, and backup/restore rehearsal
+2. Refresh-token server-side revocation and CSRF protection for cross-site deployments
+3. More advanced RAG retrieval and semantic ranking
