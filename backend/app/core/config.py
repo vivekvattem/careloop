@@ -2,11 +2,26 @@ from functools import lru_cache
 from typing import Literal
 from urllib.parse import urlparse
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 LOCAL_DATABASE_URL = "postgresql+psycopg://careloop:careloop@localhost:5432/careloop"
 LOCAL_JWT_SECRET = "development-only-secret-change-before-production"
+
+
+def normalize_database_url(database_url: str) -> str:
+    """Select the project's Psycopg 3 dialect for Render and legacy URLs.
+
+    Render supplies PostgreSQL URLs with a bare ``postgresql://`` scheme.
+    SQLAlchemy associates that scheme with psycopg2 by default, which CareLoop
+    intentionally does not install. Replacing only the leading scheme preserves
+    the complete credential, host, database, query, and SSL portion verbatim.
+    """
+    if database_url.startswith("postgresql://"):
+        return "postgresql+psycopg://" + database_url.removeprefix("postgresql://")
+    if database_url.startswith("postgres://"):
+        return "postgresql+psycopg://" + database_url.removeprefix("postgres://")
+    return database_url
 
 
 class Settings(BaseSettings):
@@ -55,6 +70,11 @@ class Settings(BaseSettings):
         env_prefix="CARELOOP_",
         extra="ignore",
     )
+
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def normalize_database_connection_url(cls, value: object) -> object:
+        return normalize_database_url(value) if isinstance(value, str) else value
 
     @model_validator(mode="after")
     def validate_production_secrets(self) -> "Settings":
