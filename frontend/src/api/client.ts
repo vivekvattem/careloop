@@ -73,6 +73,8 @@ async function request<T>(
 }
 
 export const api = {
+  forgotPassword: (email: string) => request<{ message: string }>("/auth/forgot-password", { method: "POST", body: JSON.stringify({ email }) }),
+  resetPassword: (token: string, password: string, passwordConfirmation: string) => request<{ message: string }>("/auth/reset-password", { method: "POST", body: JSON.stringify({ token, password, password_confirmation: passwordConfirmation }) }),
   calendarStatus: (token: string) => request<{ status: "connected" | "reauthorization_required" | "disconnected"; calendar_id: string | null }>("/integrations/google-calendar/status", {}, token),
   connectCalendar: (token: string) => request<{ authorization_url: string }>("/integrations/google-calendar/connect", { method: "POST" }, token),
   disconnectCalendar: (token: string) => request<{ status: string }>("/integrations/google-calendar/disconnect", { method: "POST" }, token),

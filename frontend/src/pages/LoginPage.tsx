@@ -42,7 +42,7 @@ export function LoginPage() {
         {error && <p className="ui-alert-error mt-5" role="alert">{error}</p>}
         <form className="mt-7 space-y-5" onSubmit={handleSubmit}>
           <FormField id="email" label="Email address" type="email" value={email} autoComplete="email" placeholder="you@example.com" onChange={setEmail} />
-          <FormField id="password" label="Password" type="password" value={password} autoComplete="current-password" onChange={setPassword} />
+          <div><FormField id="password" label="Password" type="password" value={password} autoComplete="current-password" onChange={setPassword} /><Link className="mt-2 inline-block text-sm font-semibold text-care-700 hover:underline" to="/forgot-password">Forgot password?</Link></div>
           <button className="ui-button-primary w-full py-3" type="submit" disabled={isSubmitting}>
             {isSubmitting ? "Signing in…" : "Sign in"}
           </button>
@@ -50,6 +50,7 @@ export function LoginPage() {
         <p className="mt-6 text-center text-sm text-slate-600">
           New to CareLoop? <Link className="font-semibold text-care-700 hover:underline" to="/register">Create a patient account</Link>
         </p>
+        <p className="mt-4 text-center text-sm"><Link className="text-care-700 hover:underline" to="/">Return to home</Link></p>
       </div>
     </div>
   );
