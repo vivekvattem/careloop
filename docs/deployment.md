@@ -1,6 +1,14 @@
 # Production deployment
 
-CareLoop is deployed as four independently scalable processes sharing one PostgreSQL database: the FastAPI API, the notification worker, the Calendar-sync worker, and the static React frontend. Deploying only the API is incomplete: email and Calendar jobs remain queued until both workers are running.
+CareLoop's recommended production topology is four independently scalable processes sharing one PostgreSQL database: the FastAPI API, the notification worker, the Calendar-sync worker, and the static React frontend. Deploying only the API is incomplete: email and Calendar jobs remain queued until both workers are running.
+
+## Free assessment topology
+
+`render.yaml` is deliberately a constrained hiring-assessment Blueprint: Render hosts one free PostgreSQL database and one free backend web service. The backend runs `python -m app.cli.run_demo_service`, which migrates the database and supervises the API, notification worker, and Calendar worker. It co-locates those processes only because Render Free does not support background-worker services. The React/Vite frontend is hosted separately on Vercel. The independent commands below remain the production topology.
+
+PostgreSQL still durably stores notification-outbox and Calendar-sync jobs. If the free web service sleeps or is restarted, processing pauses; pending jobs remain in PostgreSQL and resume when the service starts again. Provider failures do not invalidate appointments. Free Render Postgres is temporary (currently expires 30 days after creation) and this layout is not suitable for high-availability healthcare production or long-term production data.
+
+The demo supervisor runs `python -m alembic upgrade head` once before it starts children. A migration failure prevents startup; it does not seed data, create an administrator, or perform a downgrade. In production, run migrations in a dedicated release/pre-deploy step before independently deploying API and worker replicas.
 
 ## Container commands
 
@@ -23,7 +31,16 @@ python -m app.cli.run_notification_worker
 python -m app.cli.run_calendar_worker
 ```
 
-The Render blueprint in `render.yaml` is a provider-neutral example. Configure every required secret independently for the API and each worker; do not assume a secret configured on the web service is inherited by workers.
+The checked-in Render Blueprint is the free assessment topology. For production, configure every required secret independently for the API and each worker; do not assume a secret configured on the API is inherited by workers.
+
+### Render assessment deployment
+
+1. Create a Blueprint from this repository. It creates only `careloop-demo-api` and `careloop-postgres` on Render.
+2. Deploy the frontend as a Vercel project rooted at `frontend/`. Vercel uses `frontend/vercel.json` for React Router fallback while leaving paths containing a file extension (JavaScript, CSS, images, fonts, and so on) to static-file handling.
+3. In Vercel, set the public build-time variable `VITE_API_URL` to `https://<backend-host>/api/v1`, where `<backend-host>` is the Render backend hostname.
+4. In the Render backend service, manually configure `CARELOOP_FRONTEND_ORIGIN` to the final Vercel HTTPS origin (for example, `https://careloop-demo.vercel.app`) and set `CARELOOP_CORS_ORIGINS` to that same exact origin. Keep `CARELOOP_COOKIE_SAMESITE=lax` unless cross-site cookies genuinely require `none`; set `CARELOOP_PUBLIC_API_URL` to the Render HTTPS API origin when required by the current cookie/Calendar settings.
+5. Leave LLM, email, and Calendar integrations disabled unless their required non-placeholder configuration has been supplied through the Render secret store. If Calendar OAuth is enabled, register `https://<backend-host>/api/v1/integrations/google-calendar/callback` on the Render backend; it does not move to Vercel.
+6. After deployment, use the liveness and readiness checks below. Do not seed demo data or create an administrator automatically.
 
 ## Provisioning order
 
@@ -32,17 +49,17 @@ The Render blueprint in `render.yaml` is a provider-neutral example. Configure e
 3. Run the migration command once, after taking a restorable database backup.
 4. Deploy the API and check `/api/v1/health/live` then `/api/v1/health/ready`.
 5. Deploy both workers and confirm their concise startup/claim logs contain no credentials or clinical content.
-6. Build and deploy the frontend with only public `VITE_API_URL=https://api.example.invalid/api/v1` configured at build time.
+6. Build and deploy the Vercel frontend with only public `VITE_API_URL=https://api.example.invalid/api/v1` configured at build time. Render hosts the API and workers; Vercel hosts the browser application.
 
 Never run `alembic upgrade head` concurrently from API and worker replicas. A downgrade is an operational decision: first stop application writes, take and validate a backup, review the individual migration's downgrade safety, then deploy the previous compatible application version. Prefer forward corrective migrations for production data.
 
 ## Production browser and OAuth setup
 
-Use HTTPS custom domains for both frontend and API. Set `CARELOOP_FRONTEND_ORIGIN` to the exact frontend origin, and set `CARELOOP_CORS_ORIGINS` to explicit comma-separated browser origins that include it. Credentialed CORS cannot use `*`.
+Use HTTPS custom domains for the Vercel frontend and Render API. Set `CARELOOP_FRONTEND_ORIGIN` to the exact final Vercel origin, and set `CARELOOP_CORS_ORIGINS` to explicit comma-separated browser origins that include it. Credentialed CORS cannot use `*`.
 
 Refresh-token cookies are HttpOnly; production sets the Secure flag. Use `CARELOOP_COOKIE_SAMESITE=none` only when frontend and API require cross-site cookies, and only with a HTTPS `CARELOOP_PUBLIC_API_URL`. For same-site subdomains, `lax` is normally preferable.
 
-Register the exact HTTPS `CARELOOP_GOOGLE_REDIRECT_URI` in Google Cloud OAuth. Enable Calendar only after setting a distinct Fernet `CARELOOP_GOOGLE_TOKEN_ENCRYPTION_KEY` and non-placeholder Google client credentials. Do not put OAuth credentials, tokens, API keys, App Passwords, or Fernet keys in source control or frontend variables.
+Register the exact HTTPS `CARELOOP_GOOGLE_REDIRECT_URI` on the Render backend in Google Cloud OAuth: `https://<backend-host>/api/v1/integrations/google-calendar/callback`. Enable Calendar only after setting a distinct Fernet `CARELOOP_GOOGLE_TOKEN_ENCRYPTION_KEY` and non-placeholder Google client credentials. Do not put OAuth credentials, tokens, API keys, App Passwords, or Fernet keys in source control or frontend variables.
 
 For Gmail SMTP, use an App Password only where the Google account permits it; ordinary account passwords are not supported. For broader delivery use a verified sender/domain with SMTP, Resend, or SendGrid. Resend's onboarding sender may be restricted to the account email until a domain is verified.
 

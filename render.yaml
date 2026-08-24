@@ -1,10 +1,14 @@
+# Constrained hiring-assessment topology: one free web service supervises the
+# API plus both durable-job workers. See docs/deployment.md before using this.
 services:
   - type: web
-    name: careloop-api
-    env: docker
+    name: careloop-demo-api
+    runtime: docker
+    plan: free
     dockerfilePath: ./backend/Dockerfile
     dockerContext: .
-    healthCheckPath: /api/v1/health/ready
+    dockerCommand: python -m app.cli.run_demo_service
+    healthCheckPath: /api/v1/health/live
     envVars:
       - key: CARELOOP_ENVIRONMENT
         value: production
@@ -20,55 +24,66 @@ services:
         sync: false
       - key: CARELOOP_PUBLIC_API_URL
         sync: false
-    preDeployCommand: python -m alembic upgrade head
-
-  - type: worker
-    name: careloop-notification-worker
-    env: docker
-    dockerfilePath: ./backend/Dockerfile
-    dockerContext: .
-    dockerCommand: python -m app.cli.run_notification_worker
-    envVars:
-      - key: CARELOOP_ENVIRONMENT
-        value: production
-      - key: CARELOOP_DATABASE_URL
-        fromDatabase:
-          name: careloop-postgres
-          property: connectionString
-      # Set the same strong value as the API service in the Render secret store.
-      - key: CARELOOP_JWT_SECRET
+      - key: CARELOOP_COOKIE_SAMESITE
+        value: lax
+      - key: CARELOOP_LLM_ENABLED
+        value: "false"
+      - key: CARELOOP_LLM_PROVIDER
         sync: false
-      - key: CARELOOP_FRONTEND_ORIGIN
+      - key: CARELOOP_LLM_API_KEY
         sync: false
-
-  - type: worker
-    name: careloop-calendar-worker
-    env: docker
-    dockerfilePath: ./backend/Dockerfile
-    dockerContext: .
-    dockerCommand: python -m app.cli.run_calendar_worker
-    envVars:
-      - key: CARELOOP_ENVIRONMENT
-        value: production
-      - key: CARELOOP_DATABASE_URL
-        fromDatabase:
-          name: careloop-postgres
-          property: connectionString
-      # Set the same strong value as the API service in the Render secret store.
-      - key: CARELOOP_JWT_SECRET
+      - key: CARELOOP_LLM_BASE_URL
         sync: false
-      - key: CARELOOP_FRONTEND_ORIGIN
+      - key: CARELOOP_LLM_MODEL
         sync: false
-
-  - type: web
-    name: careloop-frontend
-    env: docker
-    dockerfilePath: ./frontend/Dockerfile
-    dockerContext: .
-    envVars:
-      - key: VITE_API_URL
+      - key: CARELOOP_LLM_TIMEOUT_SECONDS
+        sync: false
+      - key: CARELOOP_EMAIL_DELIVERY_REQUIRED
+        value: "false"
+      - key: CARELOOP_EMAIL_PROVIDER
+        sync: false
+      - key: CARELOOP_EMAIL_FROM_ADDRESS
+        sync: false
+      - key: CARELOOP_EMAIL_TIMEOUT_SECONDS
+        sync: false
+      - key: CARELOOP_SMTP_HOST
+        sync: false
+      - key: CARELOOP_SMTP_PORT
+        sync: false
+      - key: CARELOOP_SMTP_USERNAME
+        sync: false
+      - key: CARELOOP_SMTP_PASSWORD
+        sync: false
+      - key: CARELOOP_SMTP_USE_STARTTLS
+        sync: false
+      - key: CARELOOP_SENDGRID_API_KEY
+        sync: false
+      - key: CARELOOP_RESEND_API_KEY
+        sync: false
+      - key: CARELOOP_RESEND_BASE_URL
+        sync: false
+      - key: CARELOOP_GOOGLE_CALENDAR_ENABLED
+        value: "false"
+      - key: CARELOOP_GOOGLE_CLIENT_ID
+        sync: false
+      - key: CARELOOP_GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: CARELOOP_GOOGLE_REDIRECT_URI
+        sync: false
+      - key: CARELOOP_GOOGLE_TOKEN_ENCRYPTION_KEY
+        sync: false
+      - key: CARELOOP_GOOGLE_CALENDAR_SCOPES
+        sync: false
+      - key: CARELOOP_NOTIFICATION_POLL_SECONDS
+        sync: false
+      - key: CARELOOP_NOTIFICATION_MAX_ATTEMPTS
+        sync: false
+      - key: CARELOOP_NOTIFICATION_BASE_RETRY_SECONDS
+        sync: false
+      - key: CARELOOP_NOTIFICATION_STALE_CLAIM_SECONDS
         sync: false
 
 databases:
   - name: careloop-postgres
-    plan: basic-256mb
+    plan: free
+    postgresMajorVersion: "16"
