@@ -27,6 +27,7 @@ class NotificationEventType(str, enum.Enum):
     APPOINTMENT_RESCHEDULED = "appointment_rescheduled"
     POST_VISIT_APPROVED = "post_visit_approved"
     MEDICATION_REMINDER_DUE = "medication_reminder_due"
+    PASSWORD_RESET = "password_reset"
 
 
 class NotificationOutbox(TimestampMixin, Base):

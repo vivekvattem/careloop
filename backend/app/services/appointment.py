@@ -197,8 +197,8 @@ class AppointmentService:
 
             create_pending_pre_visit(self.db, appointment, symptom_record)
             from app.models.notification import NotificationEventType
-            from app.services.notifications import enqueue
-            enqueue(self.db, event_type=NotificationEventType.APPOINTMENT_CONFIRMED, recipient=patient, appointment_id=appointment.id, idempotency_key=f"appointment-confirmed:{appointment.id}", payload={"message": "Your CareLoop appointment is confirmed."})
+            from app.services.notifications import appointment_payload, enqueue
+            enqueue(self.db, event_type=NotificationEventType.APPOINTMENT_CONFIRMED, recipient=patient, appointment_id=appointment.id, idempotency_key=f"appointment-confirmed:{appointment.id}", payload=appointment_payload(appointment, message="Your CareLoop appointment is confirmed."))
             # Calendar delivery is durable work in this same domain transaction; it never calls Google here.
             from app.services.calendar import enqueue_sync
             enqueue_sync(self.db, appointment, patient.id)
@@ -236,8 +236,8 @@ class AppointmentService:
         appointment.cancellation_reason = reason
         appointment.cancelled_at = datetime.now(timezone.utc)
         from app.models.notification import NotificationEventType
-        from app.services.notifications import enqueue
-        enqueue(self.db, event_type=NotificationEventType.APPOINTMENT_CANCELLED, recipient=appointment.patient, appointment_id=appointment.id, idempotency_key=f"appointment-cancelled:{appointment.id}", payload={"message": "Your CareLoop appointment was cancelled."})
+        from app.services.notifications import appointment_payload, enqueue
+        enqueue(self.db, event_type=NotificationEventType.APPOINTMENT_CANCELLED, recipient=appointment.patient, appointment_id=appointment.id, idempotency_key=f"appointment-cancelled:{appointment.id}", payload=appointment_payload(appointment, message="Your CareLoop appointment was cancelled."))
         from app.services.calendar import enqueue_sync
         enqueue_sync(self.db, appointment, appointment.patient_user_id)
         self.appointments.create_history(
@@ -332,6 +332,9 @@ class AppointmentService:
                 actor_user_id=patient.id,
                 reason="Created by rescheduling",
             )
+            from app.models.notification import NotificationEventType
+            from app.services.notifications import appointment_payload, enqueue
+            enqueue(self.db, event_type=NotificationEventType.APPOINTMENT_RESCHEDULED, recipient=patient, appointment_id=replacement.id, idempotency_key=f"appointment-rescheduled:{replacement.id}", payload=appointment_payload(replacement, message="Your CareLoop appointment was rescheduled."))
             # Rescheduling creates a replacement row. Delete/create avoids transferring a Google mapping
             # across appointment identities and remains idempotent for adjacent reschedules.
             from app.services.calendar import enqueue_sync

@@ -1,5 +1,6 @@
 from app.models.doctor import DoctorLeave, DoctorProfile, DoctorWorkingHour
 from app.models.user import User, UserRole
+from app.models.password_reset import PasswordResetToken
 from app.models.visit import (
     CareDocument,
     CareDocumentType,
@@ -37,6 +38,7 @@ __all__ = [
     "SymptomSubmission",
     "User",
     "UserRole",
+    "PasswordResetToken",
     "CareDocument",
     "CareDocumentType",
     "ClinicalNote",

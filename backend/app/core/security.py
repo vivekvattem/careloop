@@ -20,6 +20,7 @@ class TokenClaims(BaseModel):
     token_type: Literal["access", "refresh"]
     exp: datetime
     iat: datetime
+    auth_version: int = 0
 
 
 class InvalidTokenError(Exception):
@@ -55,6 +56,7 @@ def _create_token(user: User, token_type: Literal["access", "refresh"]) -> str:
         "token_type": token_type,
         "iat": now,
         "exp": now + lifetime,
+        "auth_version": user.auth_version,
     }
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
