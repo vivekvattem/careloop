@@ -36,6 +36,48 @@ flowchart TB
 
 The API owns authorization and transactional domain changes. Workers claim durable jobs from PostgreSQL before contacting external providers, so provider outages do not hold application transactions open.
 
+### Appointment and visit data flow
+
+```mermaid
+flowchart TB
+    Patient["Patient"] --> Slots["Doctor slots"]
+    Slots --> Hold["Slot hold"]
+    Hold --> Confirm["AppointmentService.confirm"]
+    Confirm --> Appointment["Appointment + symptoms + status history"]
+    Confirm --> Outbox["Notification outbox"]
+    Confirm --> CalendarJobs["Calendar sync jobs"]
+    Appointment --> PreVisit["Pending pre-visit summary"]
+    PreVisit --> PreWorker["Background generation"]
+    PreWorker --> LLM["OpenAI-compatible LLM"]
+    PreWorker --> PreFallback["Deterministic fallback"]
+    Doctor["Doctor review / completion"] --> Clinical["Clinical note + prescription"]
+    Clinical --> PostVisit["Post-visit summary"]
+    PostVisit --> Review["Approve or reject"]
+    Review --> PatientView["Patient-approved view"]
+```
+
+Confirmation, cancellation, and rescheduling commit CareLoop state and enqueue notification/Calendar work transactionally. Email and Calendar provider calls happen later in workers, while LLM generation runs in a separate background task; a reschedule creates a linked replacement appointment rather than overwriting the original slot.
+
+### Verified Care History / RAG flow
+
+```mermaid
+flowchart TB
+    Symptoms["Current appointment symptoms"] --> Query["History query text"]
+    Query --> Retriever["HistoryRetriever"]
+    Docs[("CareDocument records")] --> Retriever
+    Retriever --> Filters["Same patient · exclude current appointment\nverified clinical sources or symptoms"]
+    Filters --> Rank["PostgreSQL lexical ranking\n(or bounded SQLite term overlap)"]
+    Rank --> Sources["Up to 3 ranked source links"]
+    Sources --> Packet["Pre-visit care packet context"]
+    Symptoms --> Packet
+    Packet --> LLM2["OpenAI-compatible LLM"]
+    Packet --> Fallback["Deterministic fallback"]
+    LLM2 --> Summary["Stored pre-visit summary"]
+    Fallback --> Summary
+```
+
+History retrieval is patient-scoped and bounded. PostgreSQL uses `to_tsvector`/`tsquery` lexical ranking; the implementation does not use a vector database, embeddings, or unrestricted medical-memory access. Retrieved source relationships are stored for inspection, and only appropriate approved/verified documents or the patient’s symptom document are eligible.
+
 ## Core capabilities
 
 - Patient-only public registration and patient, doctor, and administrator authorization.
