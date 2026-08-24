@@ -89,6 +89,37 @@ History retrieval is patient-scoped and bounded. PostgreSQL uses `to_tsvector`/`
 - Optional patient-owned Google Calendar OAuth and durable create/update/delete synchronization.
 - Secure password reset with hashed, expiring, single-use tokens and authentication-version invalidation.
 
+## Database Schema
+
+PostgreSQL is the source of truth for identity, scheduling, visits, AI outputs and durable integration jobs. Alembic manages schema evolution.
+
+```mermaid
+erDiagram
+    USERS ||--o| DOCTOR_PROFILES : "may own"
+    USERS ||--o{ APPOINTMENTS : "books"
+    DOCTOR_PROFILES ||--o{ APPOINTMENTS : "receives"
+    DOCTOR_PROFILES ||--o{ DOCTOR_WORKING_HOURS : "defines"
+    DOCTOR_PROFILES ||--o{ DOCTOR_LEAVES : "takes"
+    APPOINTMENTS ||--o| SYMPTOM_SUBMISSIONS : "has"
+    APPOINTMENTS ||--o| PRE_VISIT_SUMMARIES : "generates"
+    APPOINTMENTS ||--o| CLINICAL_NOTES : "records"
+    APPOINTMENTS ||--o| PRESCRIPTIONS : "creates"
+    APPOINTMENTS ||--o| POST_VISIT_SUMMARIES : "generates"
+    PRESCRIPTIONS ||--o{ PRESCRIPTION_ITEMS : "contains"
+    PRESCRIPTION_ITEMS ||--o{ MEDICATION_REMINDER_SCHEDULES : "schedules"
+    APPOINTMENTS ||--o{ NOTIFICATION_OUTBOX : "enqueues"
+    APPOINTMENTS ||--o{ CALENDAR_SYNC_JOBS : "enqueues"
+    USERS ||--o| GOOGLE_CALENDAR_CONNECTIONS : "connects"
+    APPOINTMENTS ||--o{ APPOINTMENT_CALENDAR_MAPPINGS : "maps"
+    USERS ||--o{ PASSWORD_RESET_TOKENS : "requests"
+    CARE_DOCUMENTS }o--|| USERS : "belongs to"
+    CARE_DOCUMENTS }o--|| APPOINTMENTS : "references"
+    PRE_VISIT_SUMMARIES ||--o{ PRE_VISIT_SUMMARY_SOURCES : "cites"
+    CARE_DOCUMENTS ||--o{ PRE_VISIT_SUMMARY_SOURCES : "is cited"
+```
+
+The schema also records appointment status history, encrypted Calendar connection material, OAuth state hashes, and provider-safe failure metadata. Foreign keys and unique constraints enforce the one-to-one and idempotency rules described by the services.
+
 ## Technology stack
 
 Backend: Python 3.12, FastAPI, Pydantic v2, SQLAlchemy 2, Alembic, PostgreSQL/psycopg, PyJWT, Argon2 via `pwdlib`, and Pytest.
@@ -125,6 +156,10 @@ uvicorn app.main:app --reload
 ```
 
 The API is available at `http://localhost:8000`; interactive documentation is at `/docs`. Liveness and database readiness are exposed at `/api/v1/health/live` and `/api/v1/health/ready`.
+
+### API documentation
+
+FastAPI generates the interactive Swagger UI at `http://localhost:8000/docs` and the OpenAPI JSON document at `http://localhost:8000/openapi.json`. The route groups are summarized below in [Selected API areas](#selected-api-areas); the generated OpenAPI document is the authoritative request and response contract.
 
 ### 3. Install and run the frontend
 
@@ -180,6 +215,15 @@ All routes are prefixed with `/api/v1`.
 
 Backend variables use the `CARELOOP_` prefix and are documented in [backend/.env.example](backend/.env.example). Frontend variables use Vite's `VITE_` prefix and are documented in [frontend/.env.example](frontend/.env.example). Never commit `.env` files or place backend secrets in frontend variables.
 
+Copy the examples for local setup rather than inventing variable names:
+
+```bash
+cp backend/.env.example backend/.env
+cp frontend/.env.example frontend/.env
+```
+
+The example files contain placeholders and local development defaults only. Keep real API keys, OAuth credentials, SMTP credentials, encryption keys, and JWT secrets in the ignored local file or deployment secret store.
+
 The documented LLM example uses Groq's OpenAI-compatible endpoint:
 
 ```env
@@ -189,6 +233,35 @@ CARELOOP_LLM_MODEL=openai/gpt-oss-20b
 ```
 
 LLM responses use a strict JSON schema and are validated again with Pydantic. Authentication/model errors are not retried; rate limits, timeouts, and transient server errors have bounded retry behavior. Email and Calendar providers similarly use sanitized failure categories and never receive clinical data beyond their allowlisted payloads.
+
+### LLM prompt contracts
+
+The versioned prompt contracts are `pre_visit_v1` and `post_visit_v1`. Their system prompts, untrusted-data boundaries, required output behavior, and JSON-delimited user sections are defined in [`backend/app/services/prompts.py`](backend/app/services/prompts.py) and explained in [Phase 3 visit intelligence](docs/phase-3-ai-visit-intelligence.md). The pre-visit prompt receives current symptoms and bounded retrieved history; the post-visit prompt receives doctor-authored notes and the structured prescription. Neither prompt grants the model unrestricted access to patient records.
+
+### Google Calendar setup
+
+Calendar synchronization is optional and patient-owned. Create a Google OAuth web application, register the exact local callback URL below, and enable the Calendar API:
+
+```text
+http://localhost:8000/api/v1/integrations/google-calendar/callback
+```
+
+Set these names in the ignored backend `.env` when Calendar is enabled:
+
+```env
+CARELOOP_GOOGLE_CALENDAR_ENABLED=true
+CARELOOP_GOOGLE_CLIENT_ID=
+CARELOOP_GOOGLE_CLIENT_SECRET=
+CARELOOP_GOOGLE_REDIRECT_URI=http://localhost:8000/api/v1/integrations/google-calendar/callback
+CARELOOP_GOOGLE_TOKEN_ENCRYPTION_KEY=
+CARELOOP_GOOGLE_CALENDAR_SCOPES=https://www.googleapis.com/auth/calendar.events
+```
+
+Generate a Fernet key for `CARELOOP_GOOGLE_TOKEN_ENCRYPTION_KEY`; do not commit it. The OAuth connect, callback, disconnect, status, and appointment-sync behavior is documented in [Phase 6 Google Calendar](docs/phase-6-google-calendar.md). Calendar event payloads are intentionally minimal and exclude symptoms, diagnoses, notes, prescriptions, summaries, and medical history.
+
+## Hosted application
+
+This repository does not define or verify a hosted application URL. The checked-in deployment blueprint is provider-compatible, but no deployment is claimed here. Use the local URLs above for evaluation, or record a deployed URL only after it has been independently verified. The deployment topology and environment matrix are in the [deployment guide](docs/deployment.md).
 
 ## Tests
 
@@ -218,6 +291,8 @@ Detailed implementation and operational notes remain under [`docs/`](docs/):
 - [Phase 4 post-visit intelligence](docs/phase-4-post-visit-intelligence.md)
 - [Phase 5 notifications and reminders](docs/phase-5-notifications-and-reminders.md)
 - [Phase 6 Google Calendar](docs/phase-6-google-calendar.md)
+
+For a system-design review, start with the architecture and data-flow diagrams above, then read the [deployment guide](docs/deployment.md), [readiness audit](docs/deployment-readiness-audit.md), and the phase documents for concurrency, visit-intelligence, notification, and Calendar trade-offs.
 
 ## Project structure
 
