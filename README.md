@@ -1,6 +1,6 @@
 # CareLoop
 
-<img src="frontend/public/careloop-logo.svg" alt="CareLoop" width="212" />
+<img src="frontend/public/careloop-mark.svg" alt="CareLoop mark" width="44" />
 
 CareLoop is an AI-assisted healthcare appointment and visit-continuity platform for patients, doctors, and administrators.
 
